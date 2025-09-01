@@ -1,0 +1,13 @@
+archive.py
+*.py~
+endstop_test.py
+*.json
+main_script.py
+*.txt.*
+output.log
+test1.py
+test2.py
+test3.py
+*.jpg
+test_script.py
+

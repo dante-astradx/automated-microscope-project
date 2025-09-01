@@ -1,0 +1,2 @@
+gcc -O3 -c image_analysis.c
+gcc -shared -o lib_image_analysis.so.0.0 -Wl,-soname,lib_image_analysis.so.0 image_analysis.o

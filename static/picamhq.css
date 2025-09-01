@@ -1,0 +1,37 @@
+
+body
+{
+    font-family: "Courier New", monospace, sans-serif;
+}
+
+.controls fieldset
+{
+    height: 150px;
+}
+
+fieldset 
+{
+    display: inline;
+    padding: 2px;
+}
+
+td button
+{
+    width: 50px;
+}
+
+fieldset div
+{
+    margin: 5px;
+}
+
+/*
+table{
+    margin: 2px;
+    padding: 12px;
+}
+*/
+
+td {
+    vertical-align: top;
+}

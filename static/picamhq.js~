@@ -1,0 +1,224 @@
+
+var chart = null;
+var chartColors = ["red", "yellow", "green"];
+var curLockout = null;
+var curMode = "na";
+
+var chartTimeout = setTimeout(makeChart, 1);
+var imageInterval = setInterval(getImage, 200);
+var statusInterval = setInterval(getStatus, 100);
+
+
+function addOffsetToChart(offset, color){
+    let colors = chart.data.datasets[0].pointBorderColor;
+    let data = chart.data.datasets[0].data;
+    for (let i = 0; i < (data.length - 1); i++) {
+	colors[i] = colors[i+1];
+	data[i] = data[i+1];
+    }
+    colors[(data.length-1)] = color
+    data[(data.length-1)] = offset
+    chart.update();
+}
+
+function getImage() {
+    let params = new URLSearchParams({cmd: 'getImage'})
+    fetch('/axicon/uiCommand?' + params.toString())
+	.then(response => response.json())  
+	.then(json => {
+	    var image = document.getElementById('image');
+	    image.src = 'data:image/jpeg;base64,'+json['image'];
+	    var unwrapped = document.getElementById('unwrapped');
+	    unwrapped.src = 'data:image/jpeg;base64,'+json['unwrapped'];	    
+	})
+}
+
+function getStatus() {
+    let params = new URLSearchParams({cmd: 'getStatus'})
+    fetch('/axicon/uiCommand?' + params.toString())    
+	.then(response => response.json())  
+	.then(json => {
+	    statusUpdate(json);
+	})
+}
+
+function jump(d) {
+    let step = document.getElementById('jump size').value;
+    let params = new URLSearchParams({cmd: 'jump', direction: d, step: step});
+    fetch('/axicon/uiCommand?' + params.toString())
+	.then(response => response.json())
+	.then(json => {});    
+}
+
+function lock() {
+    let lockText = document.getElementById('lock button').textContent;
+    let params;
+    if (lockText == "Lock"){
+	params = new URLSearchParams({cmd: 'lock'});
+    }
+    else {
+	params = new URLSearchParams({cmd: 'unlock'});
+    }
+    fetch('/axicon/uiCommand?' + params.toString())
+	.then(response => response.json())
+	.then(json => {});
+}
+
+function makeChart() {
+    let colors = [];
+    let data = [];
+    for (let i = -20; i <= 0; i++){
+	colors.push('green')
+	data.push({x : i, y : 0})
+    }
+    
+    chart = new Chart(
+	document.getElementById('acquisitions'),
+	{
+	    type: 'line',
+	    data: {
+		labels: data.map(row => row.x),
+		datasets: [
+		    {
+			label: '',
+			data: data.map(row => row.y),
+			borderColor: 'rgb(210, 210, 210)',
+			pointBackgroundColor: 'white',
+			pointBorderColor: colors
+		    }
+		]
+	    },
+	    options: {
+		plugins: {
+		    legend: {
+			display: false
+		    },
+		    tooltip: {
+			enabled: false
+		    }
+		},
+		animation: {
+		    duration: 0
+		},
+		scales: {
+		    x: {
+			ticks: {
+			    display: false
+			}
+		    }
+		}
+	    }
+	}
+    );
+}
+
+function moveCenter(v,h){
+    let params = new URLSearchParams({cmd: 'moveCenter', v: v, h: h});
+    fetch('/axicon/uiCommand?' + params.toString())
+	.then(response => response.json())
+	.then(json => {});
+}
+
+function rezero(value){
+    let params = new URLSearchParams({cmd: 'rezero'});
+    fetch('/axicon/uiCommand?' + params.toString())
+	.then(response => response.json())
+	.then(json => {});
+}
+
+function setContrast(value){
+    let params = new URLSearchParams({cmd: 'setContrast', value: value});
+    fetch('/axicon/uiCommand?' + params.toString())
+	.then(response => response.json())
+	.then(json => {});
+}
+
+function setLaserPower(value){
+    let params = new URLSearchParams({cmd: 'setLaserPower', value: value});
+    fetch('/axicon/uiCommand?' + params.toString())
+	.then(response => response.json())
+	.then(json => {});
+}
+
+function statusUpdate(json){
+    let sigColor = chartColors[json['signal quality']];
+    
+    document.getElementById('offset').innerHTML = json['offset'].toFixed(4);
+
+    document.getElementById('sum').innerHTML = json['sum'].toFixed(1);
+    document.getElementById('sum').style.color = sigColor;
+    
+    document.getElementById('contrast').value = json['contrast'];
+    document.getElementById('contrast value').innerHTML = json['contrast'].toFixed(0);
+    
+    document.getElementById('laser power').innerHTML = json['laser power'].toFixed(0);
+    
+    document.getElementById('laser set point').value = json['laser set point'];
+    document.getElementById('laser set point value').innerHTML = json['laser set point'].toFixed(0);
+
+    if (json['lock target'] === ""){
+	document.getElementById('lock target').innerHTML = "";
+    }
+    else{
+	document.getElementById('lock target').innerHTML = json['lock target'].toFixed(3);
+    }
+    
+    document.getElementById('mode').innerHTML = json['mode'].toLocaleString("en-IN");
+    if (json['mode'] == 'locked'){
+	document.getElementById('mode').style.color = chartColors[json['lock quality']];
+    }
+    else{
+	document.getElementById('mode').style.color = "black";
+    }
+    updateLockButtonText(json['mode']);
+    document.getElementById("raw corrected").checked = !json['offset unwrapped'];
+    updateUiLockout(json['ui lockout']);
+
+    document.getElementById('z position').innerHTML = json['z position'].toFixed(3);
+
+    /* Update chart. */
+    addOffsetToChart(json['offset'], sigColor);
+}
+
+function takeBackground(){
+    let params = new URLSearchParams({cmd: 'takeBackground'});
+    fetch('/axicon/uiCommand?' + params.toString())
+	.then(response => response.json())
+	.then(json => {});
+}
+
+function toggleUnwrappedDisplay(){
+    let params = new URLSearchParams({cmd: 'toggleUnwrappedDisplay'});
+    fetch('/axicon/uiCommand?' + params.toString())
+	.then(response => response.json())
+	.then(json => {});    
+}
+
+function updateLockButtonText(mode){
+    if (mode == curMode){
+	return;
+    }
+
+    curMode = mode;
+    if (mode == 'none'){
+	document.getElementById('lock button').textContent = 'Lock';
+    }
+    else if (mode == 'locked'){
+	document.getElementById('lock button').textContent = 'Unlock';
+    }
+}
+
+function updateUiLockout(lockout){
+    if (curLockout == lockout){
+	return;
+    }
+
+    curLockout = lockout;
+
+    // Enable/disable buttons and laser power slider.
+    let controls = ['mcu button', 'mcd button', 'mcl button', 'mcr button', 'ju button',
+		    'jd button', 'lock button', 'rezero button', 'laser set point'];
+    for (let i = 0; i < controls.length; i++) {
+	document.getElementById(controls[i]).disabled = lockout;
+    }
+}

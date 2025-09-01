@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Microscope Control</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 30px; }
+        .button { padding: 12px 24px; margin-right: 20px; border-radius: 8px; border: none; cursor: pointer; font-size: 16px; }
+        .start { background-color: #4CAF50; color: white; }
+        .go { background-color: #2196F3; color: white; }
+        .stop { background-color: #e74c3c; color: white; }
+        .lab { background-color: #3498db; color: white; }
+        .save { background-color: #f39c12; color: white; }
+        .status { margin-top: 20px; font-weight: bold; padding: 10px; border-radius: 6px; }
+        .success { background-color: #d4edda; color: #155724; }
+        .danger  { background-color: #f8d7da; color: #721c24; }
+        .warning { background-color: #fff3cd; color: #856404; }
+        form { display: inline-block; margin-right: 10px; }
+        #terminal-output { 
+            margin-top: 20px; 
+            padding: 10px; 
+            border: 1px solid #ccc; 
+            border-radius: 6px; 
+            background: #000; 
+            color: #0f0; 
+            font-family: monospace; 
+            height: 400px; 
+            overflow-y: auto; 
+            white-space: pre-wrap;
+        }
+    </style>
+    <script>
+        // Save Images (AJAX)
+        function saveImages() {
+            fetch('/save_all', { method: 'POST' })
+            .then(response => response.json())
+            .then(data => {
+                const statusDiv = document.getElementById('save-status');
+                statusDiv.textContent = data.message;
+                statusDiv.className = 'status ' + (data.status || 'success');
+            })
+            .catch(error => {
+                const statusDiv = document.getElementById('save-status');
+                statusDiv.textContent = 'An error occurred while saving images.';
+                statusDiv.className = 'status danger';
+                console.error('Error:', error);
+            });
+        }
+
+        // Poll status every 2 seconds (keeps step-status working like before)
+        function pollStatus() {
+            fetch('/status')
+            .then(response => response.json())
+            .then(data => {
+                if (data.status_message) {
+                    document.getElementById('step-status').textContent = data.status_message;
+                }
+            })
+            .catch(err => console.error("Polling error:", err));
+        }
+        setInterval(pollStatus, 2000);
+
+        // SSE: stream terminal output into terminal-output div
+        window.onload = function() {
+            const outputDiv = document.getElementById("terminal-output");
+            const evtSource = new EventSource("/stream");
+            evtSource.onmessage = function(event) {
+                outputDiv.textContent += event.data + "\n";
+                outputDiv.scrollTop = outputDiv.scrollHeight; // auto-scroll
+            };
+        }
+    </script>
+</head>
+
+<body>
+    <h1>Microscope Control</h1>
+
+    <!-- Lab GUI Button -->
+    <form action="{{ url_for('lab_gui') }}" method="post">
+        <button type="submit" class="button lab">Lab GUI</button>
+    </form>
+
+    <!-- Folder Name Input and Start -->
+    <form action="{{ url_for('start') }}" method="post">
+        <label for="folder_name">Enter Folder Name:</label>
+        <input type="text" id="folder_name" name="folder_name" required>
+        <button type="submit" class="button start">Start</button>
+    </form>
+
+    <!-- Go Button -->
+    <form action="{{ url_for('next_step') }}" method="post">
+        <button type="submit" class="button go">Go</button>
+    </form>
+
+    <!-- Stop Button -->
+    <form action="{{ url_for('stop_script') }}" method="post">
+        <button type="submit" class="button stop">STOP</button>
+    </form>
+
+    <!-- Save Images Button -->
+    <button type="button" class="button save" onclick="saveImages()">Save Images</button>
+
+    <!-- Step/status message -->
+    <div class="status" id="step-status">{{ status_message or "" }}</div>
+
+    <!-- Status Message for Save Images (AJAX) -->
+    <div id="save-status"></div>
+
+    <!-- Flash Messages -->
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        {% for category, message in messages %}
+          <div class="status {{ category }}">{{ message }}</div>
+        {% endfor %}
+      {% endif %}
+    {% endwith %}
+
+    <!-- New Terminal Output Window -->
+    <h2>Terminal Output</h2>
+    <div id="terminal-output"></div>
+</body>
+</html>

@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <title>Axicon Focus Lock</title>
+    <script src="{{ url_for('static', filename='chart.umd.js') }}"></script>
+    <script src="{{ url_for('static', filename='axicon.js') }}"></script>
+    <link rel="stylesheet" href="{{ url_for('static', filename='axicon.css') }}">    
+    <link rel="shortcut icon" href="{{ url_for('static', filename='favicon.ico') }}">
+  </head>
+  <body>
+    <fieldset style="width: 830px;">
+      <legend>Camera</legend>
+      <table>
+	<tr>
+	  <td>
+	    <img id="image" alt="not loaded?">
+	  </td>
+	  <td>
+	    <img id="unwrapped" alt="not loaded?">
+	  </td>
+	  <td>
+	    <div style="height: 180px;"><canvas id="acquisitions"></canvas></div>
+	  </td>
+	</tr>
+	<!--
+	<tr>
+	  <td>
+	    <button onclick="takeBackground()">Take Background</button>	    
+	  </td>
+	</tr>
+	-->
+      </table>
+    </fieldset>
+
+    <table style="width: 848px;" class="controls">
+      <tr>
+	<td>
+	  <fieldset style="width: 170px;">
+	    <legend>Display Controls</legend>
+	    <input type="range" id="contrast" min="100" max="4096" value="4096" oninput="setContrast(this.value)">
+	    <div>Contrast: <span id="contrast value"></span></div>
+	    <!-- <div><button style="width: 100px;" onclick="toggleUnwrappedDisplay()" id="unwrapped display">Toggle</button></div> -->
+	    <div>
+	      <input type="checkbox" id="raw corrected" name="unwrapped display" value="raw" onclick="toggleUnwrappedDisplay()">
+	      <label for="raw">Raw</label><br>
+	      <!--
+	      <input type="radio" id="corrected" name="unwrapped display" value="corrected" onclick="toggleUnwrappedDisplay()">
+	      <label for="corrected">Corrected</label><br>
+	      -->
+	    </div>
+	  </fieldset>
+	</td>
+	<td>
+	  <fieldset style="width: 150px;">
+	    <legend>Z Control</legend>
+	    <div><input style="width: 110px;" type="number" pattern="[0-9]+([,\.][0-9]+)?" id="jump size" step="0.1" value="0.5"></div>
+	    <span><button onclick="jump(1)" id="ju button">Up</button></span>
+	    <span><button onclick="jump(-1)" id="jd button">Down</button></span>
+	  </fieldset>
+	</td>	
+	<td>
+	  <fieldset style="width: 200px;">
+	    <legend>Lock Control</legend>
+	    <div><input type="range" id="laser set point" min="0" max="255" value="0" oninput="setLaserPower(this.value)"></div>
+	    <div>Laser: <span id="laser set point value"></span></div>
+	    <div>
+	      <button style="width: 60px;" onclick="lock()" id="lock button">Lock</button>
+	      <button style="width: 80px;" onclick="rezero()" id="rezero button">Rezero</button>
+	    </div>	    
+	    <div>Lock target: <span id="lock target"></span></div>
+	  </fieldset>
+	</td>
+	<td>
+	  <fieldset style="width: 240px;">
+	    <legend>Lock Status</legend>
+	    <div>Offset: <span id="offset"></span> (um)</div>
+	    <div>Sum: <span id="sum"></span> (AU)</div>
+	    <div>Z position: <span id="z position"></span> (um)</div>
+	    <div>Laser power: <span id="laser power"></span> (AU)</div>
+	    <div>Mode: <span id="mode"></span></div>
+	  </fieldset>
+	</td>	
+      <tr>
+    </table>
+
+    <p><button onclick="clearInterval(imageInterval);clearInterval(statusInterval)" id="stop button">Stop</button></p>
+  </body>
+</html>
