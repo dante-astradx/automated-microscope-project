@@ -11,7 +11,7 @@ import time
 import zmq
 import os
 from datetime import datetime
-
+import config as c
 import image_analysis_c as iac
 import analysis as a
 
@@ -36,7 +36,7 @@ class OutputZMQ(Output):
         self.current_json_path = None
         self.save_in_progress = False
 
-    def accumulate(self, accT, filename_base: str):
+    def accumulate(self, accT, filename_base: str, folder_path: str):
         """
         Start frame accumulation process.
         """
@@ -50,8 +50,8 @@ class OutputZMQ(Output):
             self.XX = None
 
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            self.current_tif_path = f"/home/microscope_auto/Images/{filename_base}.tif"
-            self.current_json_path = f"/home/microscope_auto/Images/{filename_base}.json"
+            self.current_tif_path = os.path.join(folder_path, f"{filename_base}.tif")
+            self.current_json_path = os.path.join(folder_path, f"{filename_base}.json")
 
             if self.verbose:
                 print(f"Accumlation target filename set to {self.current_tif_path}")
@@ -187,8 +187,10 @@ def camera_zmq(verbose = True):
             try:
                 if (msg["command"] == "accumulate"):
                     filename_from_client = msg.get("filename", "default_image")
+                    folder_path_from_client = msg.get("file_path", f"{c.PI_IMAGE_DIR}")
+
                     if (not output.accumulating()):
-                        output.accumulate(int(msg["nframes"]), filename_base=filename_from_client)
+                        output.accumulate(int(msg["nframes"]), filename_base=filename_from_client, folder_path=folder_path_from_client)
                         socket.send_string(json.dumps({"accumulating": "started"}))
                     else:
                         socket.send_string(json.dumps({"accumulating": "already running"}))

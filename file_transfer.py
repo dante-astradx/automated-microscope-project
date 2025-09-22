@@ -242,10 +242,12 @@ class FileTransfer:
 if __name__ == "__main__":
     pass
     #file = FileTransfer()
+    #file.set_filename("AR0015_20250718_NA_0.0_B1_S1_M1", 20250915)
+    #file.save_data()
     #file.get_filename()
-    #laptop_dir = "/Users/dantemuzila"
+    #laptop_dir = "/Users/dantemuzila/Downloads"
     #pi_image_dir = "/home/microscope_auto/Images"
-    #pattern = f"scanning_AR0020_20250724_F2_*.tif"
+    #pattern = f"AR0015_40x_*.*"
     #pi_files = os.listdir(pi_image_dir)
 
     #matching_files = fnmatch.filter(pi_files, pattern)

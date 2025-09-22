@@ -1,12 +1,15 @@
 from flask import Flask, render_template, request, redirect, url_for, flash, jsonify, Response
-from folder_name_logger import add_entry, clear_log, clear_last_entry
+from folder_name_logger import add_entry, clear_log, clear_last_entry, check_barcode
 from microscope_log import log_output, update_status, get_log_queue, get_status_message
+from folder_generator import generate_barcode_folders, generate_background_folders, generate_darkfield_folders, delete_barcode_folders, check_pre_imaging
+from light_controller import toggle_light
 import subprocess
 import time
 import json
 import threading
 from motor import Motor
 from file_transfer import FileTransfer
+from milestone5_file_transfer import FileTransfer5
 
 app = Flask(__name__)
 app.secret_key = "a_very_secret_key_here"
@@ -27,14 +30,27 @@ def status():
 def stream():
     """SSE endpoint for streaming Motor output."""
     def event_stream():
-        log_queue = get_log_queue()
         while True:
-            if log_queue:
-                msg = log_queue.pop(0)
-                yield f"data: {msg}\n\n"
-            time.sleep(0.5)
+            # Re-fetch new messages every loop
+            msgs = get_log_queue()   # should return and DRAIN any pending items
+            if msgs:
+                for msg in msgs:
+                    # one SSE event per message
+                    yield f"data: {msg}\n\n"
+            else:
+                # keep the connection alive and avoid busy-waiting
+                yield ": keep-alive\n\n"
+                time.sleep(0.5)
 
-    return Response(event_stream(), mimetype="text/event-stream")
+    # Important SSE headers; X-Accel-Buffering disables nginx buffering if present
+    return Response(
+        event_stream(),
+        headers={
+            "Content-Type": "text/event-stream",
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 @app.route("/start", methods=["POST"])
 def start():
@@ -43,69 +59,61 @@ def start():
     folder_name = request.form["folder_name"]
 
     if not folder_name:
-        flash("Folder name is required to start!")
+        flash("Barcode is required to start!")
         return redirect(url_for("index"))
 
-    try:
-        add_entry(folder_name)
-        update_status("Folder name successfully added to log")
-    except Exception as e:
-        update_status(f"Error saving to log: {str(e)}")
+    if not check_pre_imaging():
+        flash("Background and darkfield images must be take first. Select Pre-Imaging Button")
         return redirect(url_for("index"))
 
-    file = FileTransfer(logger=log_output)
-    file.set_filename(folder_name)
+    if check_barcode(folder_name):
+        try:
+            add_entry(folder_name)
+            update_status("Folder name successfully added to log")
+        except Exception as e:
+            update_status(f"Error saving to log: {str(e)}")
+            return redirect(url_for("index"))
+    else:
+        flash("Barcode is not in correct format")
+        return redirect(url_for("index"))
+
+    generate_barcode_folders(folder_name)
+
+    file = FileTransfer5(logger=log_output)
+    file.set_barcode(folder_name)
 
     motor_instance = Motor(filename=file, logger=log_output)
 
-    def background_task():
-        motor_instance.take_background_image()
-        update_status("Background images complete. Turn off microscope light before pressing 'GO'.")
+    def data_task():
+        motor_instance.collect_data_milestone5(1)
+        update_status("Data collection complete")
 
-    threading.Thread(target=background_task).start()
-
-    current_step = "background_in_progress"
-    return redirect(url_for("index"))
-
-@app.route("/next_step", methods=["POST"])
-def next_step():
-    global motor_instance, current_step
-
-    if motor_instance is None:
-        update_status("Please start first by entering a folder name.")
-        return redirect(url_for("index"))
-
-    if current_step == "background_in_progress":
-        def darkfield_task():
-            motor_instance.take_darkfield_image()
-            update_status("Darkfield images complete. Turn on the microscope light and put in the slide before pressing 'GO'.")
-
-        threading.Thread(target=darkfield_task).start()
-        current_step = "darkfield_in_progress"
-
-    elif current_step == "darkfield_in_progress":
-        def data_task():
-            motor_instance.collect_20x_data(1)
-            update_status("Data collection complete!")
-
-        threading.Thread(target=data_task).start()
-        current_step = "complete"
-
-    elif current_step == "complete":
-        update_status("All steps already completed.")
-
-    else:
-        update_status("Unknown state. Please start over.")
+    threading.Thread(target=data_task).start()
 
     return redirect(url_for("index"))
 
-@app.route("/lab_gui", methods=["POST"])
-def lab_gui():
-    try:
-        subprocess.Popen(["/home/microscope_auto/project_files/run_lab_gui.sh"])
-        flash("Lab GUI started successfully on laptop!", "success")
-    except Exception as e:
-        flash(f"Error running Lab GUI script: {str(e)}", "danger")
+@app.route("/check_light", methods=["POST"])
+def check_light():
+    toggle_light()
+    return redirect(url_for("index"))
+
+@app.route("/pre_imaging", methods=["POST"])
+def pre_imaging():
+    global motor_instance
+
+    generate_background_folders()
+    generate_darkfield_folders()
+
+    file = FileTransfer5(logger=log_output)
+    motor_instance = Motor(filename=file, logger=log_output)
+
+    def pre_imaging_task():
+        motor_instance.take_dark_background_image()
+        update_status("Background and darkfield images complete")
+
+    threading.Thread(target=pre_imaging_task).start()
+
+    #current_step = "background_in_progress"
     return redirect(url_for("index"))
 
 @app.route("/save_all", methods=["POST"])
@@ -116,7 +124,7 @@ def save_all():
         with open(log_file_path, "r") as f:
             folder_log = json.load(f)
 
-        ft = FileTransfer(logger=log_output)
+        ft = FileTransfer5(logger=log_output)
         ft.save_all_data(folder_log)
 
         clear_log()
@@ -156,4 +164,4 @@ def stop_script():
     return redirect(url_for("index"))
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5001, debug=True, threaded=True)
+    app.run(host="0.0.0.0", port=5001, debug=False, threaded=True)

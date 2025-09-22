@@ -9,10 +9,13 @@ import config as c
 import pandas as pd
 from camera import Camera
 from file_transfer import FileTransfer
+from milestone5_file_transfer import FileTransfer5
 import analysis as a
 from datetime import datetime
 from datetime import date
 from microscope_log import log_output, log_to_file_only, update_status
+import light_controller as lc
+
 
 class Motor:
     def __init__(self, filename, logger=print):
@@ -65,6 +68,19 @@ class Motor:
         self.start_y = 10
         self.end_y = 20
 
+        self.sm1_x_min = c.SM1_X_MIN
+        self.sm1_x_max = c.SM1_X_MAX
+        self.sm2_x_min = c.SM2_X_MIN
+        self.sm2_x_max = c.SM2_X_MAX
+        self.sm3_x_min = c.SM3_X_MIN
+        self.sm3_x_max = c.SM3_X_MAX
+
+        self.y_min = c.Y_MIN
+        self.y_max = c.Y_MAX
+
+        self.smear_x_min = None
+        self.smear_x_max = None
+
         # Image directory path
         self.pi_image_dir = c.PI_IMAGE_DIR
 
@@ -103,6 +119,15 @@ class Motor:
         # Helper to check stop flag and raise if needed
         if self.stop_requested:
             raise RuntimeError("Motor stop requested.")
+
+    def start_imaging(self):
+        lc.turn_on()
+        self.logger("Light ON, starting motor routine...")
+        time.sleep(5)
+
+    def stop_imaging(self):
+        lc.turn_off()
+        self.logger("Light OFF, motor routine complete.")
 
     # Function to send G code commands
     def send_gcode_command(self, gcode_command: str):
@@ -200,6 +225,23 @@ class Motor:
         else:
             self.logger(f"{pos} is not a valid input. Can't set objective.")
 
+    # Function to set smear id and boundary
+    def set_smear_id(self, smear_id):
+        if smear_id == "SM1":
+            self.smear_x_min = self.sm1_x_min
+            self.smear_x_max = self.sm1_x_max
+        elif smear_id == "SM2":
+            self.smear_x_min = self.sm2_x_min
+            self.smear_x_max = self.sm2_x_max
+        elif smear_id == "SM3":
+            self.smear_x_min = self.sm3_x_min
+            self.smear_x_max = self.sm3_x_max
+        else:
+            self.logger(f"{smear_id} is not a valid smear ID")
+
+        self.logger(f"Smear ID set to {smear_id}")
+        self.filename.set_smear_id(smear_id)
+
     # Function to move x-axis
     def move_x_axis(self, x_pos):
         self.logger(f"Moving x-axis to position {x_pos}mm")
@@ -244,9 +286,9 @@ class Motor:
             self.logger(f"{pos} is not a valid input. Can't move carousel")
 
     def capture_image(self, z):
-        image_filename = self.filename.data_filename_generator(self.focus_view, self.obj, self.current_x, self.current_y, z)
-        self.logger(f"Taking image! Filename: {image_filename}")
-        self.imager.take_rpi_image(10, image_filename)
+        image_filename, file_path = self.filename.data_filename_generator(self.focus_view, self.obj, self.current_x, self.current_y, z)
+        self.logger(f"Taking image! Filename: {image_filename}, File Path: {file_path}")
+        self.imager.take_rpi_image(10, image_filename, file_path)
         time.sleep(10)
 
     def focus_scan(self, start, end, step, take_image=False):
@@ -322,7 +364,7 @@ class Motor:
 
     def scan_z_axis_for_focus(self, take_image=False):
         threshold = 100
-        coarse_z_focus, coarse_max_score, _ = self.focus_scan(180, 400, 20)
+        coarse_z_focus, coarse_max_score, _ = self.focus_scan(160, 300, 20)
         self.logger(f"Max coarse score: {coarse_max_score:.2f} at z = {coarse_z_focus} µm")
 
         fine_counter = 0
@@ -371,81 +413,19 @@ class Motor:
 
         return super_fine_z_focus, super_fine_max_score, final_focus_scores
 
-    def scan_z_axis_for_grant_video(self):
-        z_focus, scores, _ = self.focus_scan(150, 300, 10)
-
-    def grant_video_procedure(self):
-        time.sleep(10)
-        motor.home_axis("X, Y")
-
-        motor.move_x_axis(120)
-        motor.move_y_axis(10)
-        motor.move_carousel("1")
-        time.sleep(1)
-        motor.scan_z_axis_for_grant_video()
-
-        motor.move_x_axis(145)
-        motor.move_y_axis(15)
-        motor.move_carousel("2")
-        time.sleep(1)
-        motor.scan_z_axis_for_grant_video()
-
-        motor.move_x_axis(120)
-        motor.move_y_axis(11)
-        motor.move_carousel("3")
-        time.sleep(1)
-        motor.scan_z_axis_for_grant_video()
-
-    def find_average_focus_level(self):
-        self.home_axis("X, Y")
-        z_focus_list = []
-        focus_score_list = []
-        for i in range(6):
-            self.go_to_random_position()
-            z_focus, focus_score, _  = self.scan_z_axis_for_focus()
-            z_focus_list.append(z_focus)
-            focus_score_list.append(focus_score)
-        # outlier removal using IQR method
-        scores_np = np.array(focus_score_list)
-        z_values_np = np.array(z_focus_list)
-
-        # Calculate Q1, Q3, and IQR for focus scores
-        Q1 = np.percentile(scores_np, 25)
-        Q3 = np.percentile(scores_np, 75)
-        IQR = Q3 - Q1
-
-        # Define outlier bounds
-        lower_bound = Q1 - 1.5 * IQR
-        upper_bound = Q3 + 1.5 * IQR
-
-        # Create a boolean mask to identify non-outliers
-        non_outlier_mask = (scores_np >= lower_bound) & (scores_np <= upper_bound)
-
-        # Filter out outliers from both scores and Z-values
-        filtered_scores = scores_np[non_outlier_mask]
-        filtered_z_values = z_values_np[non_outlier_mask]
-
-        self.logger(f"--- Outlier Removal Results ---")
-        self.logger(f"  Original focus scores: {focus_score_list}")
-        self.logger(f"  Original focus levels: {z_focus_list}")
-        self.logger(f"  Q1: {Q1:.2f}, Q3: {Q3:.2f}, IQR: {IQR:.2f}")
-        self.logger(f"  Outlier bounds: [{lower_bound:.2f}, {upper_bound:.2f}]")
-        self.logger(f"  Filtered focus scores (non-outliers): {filtered_scores}")
-        self.logger(f"  Filtered Z-values (non-outliers): {filtered_z_values}")
-
-        if len(filtered_z_values) == 0:
-            self.logger("WARNING: All focus levels were identified as outliers. Cannot calculate robust average.")
-            return None
-
-        # Calculate the robust average Z-focus from the filtered data
-        robust_average_z = np.mean(filtered_z_values)
-        self.logger(f"--- Robust Average Optimal Z-Focus Level (after outlier removal): {robust_average_z:.2f}um  ---")
-
-        return round(robust_average_z, 2)
-
     def go_to_random_position(self):
         random_x_pos = random.randint(self.start_x, self.end_x)
         random_y_pos = random.randint(self.start_y, self.end_y)
+
+        self.logger(f"Moving to random position {random_x_pos}, {random_y_pos} to check for bacteria")
+        self.move_x_axis(random_x_pos)
+        self.move_y_axis(random_y_pos)
+
+        return random_x_pos, random_y_pos
+
+    def go_to_random_position_milestone5(self):
+        random_x_pos = random.randint(self.smear_x_min, self.smear_x_max)
+        random_y_pos = random.randint(self.y_min, self.y_max)
 
         self.logger(f"Moving to random position {random_x_pos}, {random_y_pos} to check for bacteria")
         self.move_x_axis(random_x_pos)
@@ -461,9 +441,9 @@ class Motor:
             self.check_stop()
 
             self.move_carousel(f"{i+1}")
-            background_filename = self.filename.background_filename_generator(self.obj)
+            background_filename, file_path = self.filename.background_filename_generator(self.obj)
             self.logger(f"Taking background image for {self.obj}x objective. Filename: {background_filename}")
-            self.imager.take_rpi_image(10, background_filename)
+            self.imager.take_rpi_image(10, background_filename, file_path)
             time.sleep(10)
             self.logger(f"Background image taken for {self.obj}x objective")
 
@@ -474,13 +454,22 @@ class Motor:
             self.check_stop()
 
             self.move_carousel(f"{i+1}")
-            dark_filename = self.filename.darkfield_filename_generator(self.obj)
+            dark_filename, file_path = self.filename.darkfield_filename_generator(self.obj)
             self.logger(f"Taking darkfield image for {self.obj}x objective. Filename: {dark_filename}")
-            self.imager.take_rpi_image(10, dark_filename)
+            self.imager.take_rpi_image(10, dark_filename, file_path)
             time.sleep(10)
             self.logger(f"Darkfield image taken for {self.obj}x objective")
 
         self.logger("Darkfield images taken for all objectives")
+
+    def take_dark_background_image(self):
+        self.start_imaging()
+        time.sleep(15)
+
+        self.take_background_image()
+        self.stop_imaging()
+        time.sleep(15)
+        self.take_darkfield_image()
 
     def complete_zstack(self, focus_scores):
         self.logger("Completing the Zstack...")
@@ -541,140 +530,73 @@ class Motor:
         else:
             self.logger("No additional scanning required — max focus score is centered.")
 
-    def collect_data(self, fov):
-        self.move_carousel("1")
-        avg_z_level = self.find_average_focus_level()
-        self.move_z_axis(avg_z_level)
-        bacteria_locations = []
+    def collect_data_milestone5(self, fov):
+        self.start_imaging()
 
-        self.logger("Background and darkfield filenames used for bacteria detection:")
-        background_filename = self.filename.background_filename_generator(self.obj)
-        self.logger(background_filename)
-        darkfield_filename = self.filename.darkfield_filename_generator(self.obj)
-        self.logger(darkfield_filename)
+        #smear_list = ["SM1", "SM2", "SM3"]
+        smear_list = ["SM2"]
+        for i in range(len(smear_list)):
+            smear_id = smear_list[i]
+            self.set_smear_id(smear_id)
 
-        counter = 0
-        while True:
-            self.home_axis("X, Y")
-            self.current_x, self.current_y = self.go_to_random_position()
+            bacteria_locations = self.search_for_bacteria(1, True)
 
-            scanning_filename = self.filename.scanning_filename_generator(self.current_x, self.current_y, avg_z_level)
-            self.logger(f"Taking image for bacteria detection. Filename: {scanning_filename}")
-            self.imager.take_rpi_image(self.z_focus_nframes, scanning_filename)
-            time.sleep(10)
+            self.check_stop()
+            self.focus_view = 0
+            for i in range(len(bacteria_locations)):
+                self.check_stop()
 
-            is_there_bacteria = False
-            impath = f"/home/microscope_auto/Images/{scanning_filename}.tif"
-            background_path = f"/home/microscope_auto/Images/{background_filename}.tif"
-            dark_path = f"/home/microscope_auto/Images/{darkfield_filename}.tif"
+                self.home_axis("X, Y")
+                self.current_x = bacteria_locations[i][0]
+                self.current_y = bacteria_locations[i][1]
+                self.move_x_axis(self.current_x)
+                self.move_y_axis(self.current_y)
+                self.focus_view += 1
+                self.check_stop()
 
-            if counter > 12 and len(bacteria_locations) < 2:
-                is_there_bacteria, intensity_range, _ = a.cell_counter_alt(impath, dark_path, background_path, 500.0)
-            else:
-                is_there_bacteria, intensity_range, _ = a.cell_counter_alt(impath, dark_path, background_path, 700.0)
+                # 10x imaging at x,y
+                self.collect_data_with_10x()
 
-            self.logger(f"Intensity range: {intensity_range}")
+                # 20x, 40x imaging at x,y
+                self.collect_data_with_20x_40x(2)
+                self.collect_data_with_20x_40x(3)
 
-            if is_there_bacteria:
-                bacteria_locations.append([self.current_x, self.current_y])
+                # 20x, 40x imaging at x+0.25, y+0.25
+                self.current_x += 0.25
+                self.current_y += 0.25
+                self.move_x_axis(self.current_x)
+                self.move_y_axis(self.current_y)
+                self.check_stop()
 
-            if len(bacteria_locations) == fov:
-                break
-
-            counter += 1
-
-        self.logger(f"Scanning complete. {fov} location/s identified with bacteria")
-        self.logger(bacteria_locations)
-
-        self.focus_view = 0
-        for i in range(len(bacteria_locations)):
-            self.home_axis("X, Y")
-            self.current_x = bacteria_locations[i][0]
-            self.current_y = bacteria_locations[i][1]
-            self.move_x_axis(self.current_x)
-            self.move_y_axis(self.current_y)
-            self.focus_view += 1
-
-            # 10x imaging at x,y
-            self.move_carousel("1")
-            z_focus_10x, _, _ = self.scan_z_axis_for_focus()
-            self.move_z_axis(z_focus_10x)
-            self.capture_image(z_focus_10x)
-
-# --- 3rd Version: Z-stack at 20x twice, only
-            # 20x imaging at x,y
-            #self.move_carousel("2")
-            #z_focus, _, focus_scores = self.scan_z_axis_for_focus(True)
-            #self.complete_zstack(focus_scores)
-
-            # 20x imaging at x+0.25, y+0.25
-            #self.current_x += 0.25
-            #self.current_y += 0.25
-            #self.move_x_axis(self.current_x)
-            #self.move_y_axis(self.current_y)
-
-            #z_focus, _, focus_scores = self.scan_z_axis_for_focus(True)
-            #self.complete_zstack(focus_scores)
-
-# --- 2nd Version: Z-stack at 20x twice, 40x four times
-            # 20x, 40x imaging at x,y
-            for j in range(2, 4):
-                self.move_carousel(f"{j}")
-                z_focus, _, focus_scores = self.scan_z_axis_for_focus(True)
-                self.complete_zstack(focus_scores)
-
-            # 20x, 40x imaging at x+0.25, y+0.25
-            self.current_x += 0.25
-            self.current_y += 0.25
-            self.move_x_axis(self.current_x)
-            self.move_y_axis(self.current_y)
-
-            for j in range(2, 4):
-                self.move_carousel(f"{j}")
-                z_focus, _, focus_scores = self.scan_z_axis_for_focus(True)
-                self.complete_zstack(focus_scores)
-
-            # 40x imaging at x+0.25, y-0.25
-            #self.current_y -= 0.5
-            #self.move_y_axis(self.current_y)
-            #z_focus, _, focus_scores = self.scan_z_axis_for_focus(True)
-            #self.complete_zstack(focus_scores)
-
-            # 40x imaging at x-0.25, y-0.25
-            #self.current_x -= 0.5
-            #self.move_x_axis(self.current_x)
-            #z_focus, _, focus_scores = self.scan_z_axis_for_focus(True)
-            #self.complete_zstack(focus_scores)
-
-# ---- 1st Version: Z-stack at every objective ----
-        #for i in range(len(bacteria_locations)):
-            #self.home_axis("X, Y")
-            #self.current_x = bacteria_locations[i][0]
-            #self.current_y = bacteria_locations[i][1]
-            #self.move_x_axis(self.current_x)
-            #self.move_y_axis(self.current_y)
-            #self.focus_view += 1
-
-            #for j in range(3):
-                #self.move_carousel(f"{j + 1}")
-                #z_focus, _ , focus_scores = self.scan_z_axis_for_focus(True)
-
-                #self.complete_zstack(focus_scores)
+                self.collect_data_with_20x_40x(2)
+                self.collect_data_with_20x_40x(3)
 
         self.logger("Data collection finished. All images have been taken and saved to Images folder")
+        self.stop_imaging()
 
-    def search_for_bacteria(self, fov):
+    def collect_data_with_10x(self):
+        self.move_carousel("1")
+        z_focus_10x, _, _ = self.scan_z_axis_for_focus()
+        self.move_z_axis(z_focus_10x)
+        self.capture_image(z_focus_10x)
+        self.check_stop()
+
+    def collect_data_with_20x_40x(self, obj = int):
+        self.move_carousel(f"{obj}")
+        z_focus, _, focus_scores = self.scan_z_axis_for_focus(True)
+        self.complete_zstack(focus_scores)
+        self.check_stop()
+
+    def search_for_bacteria(self, fov, milestone5 = False):
         self.move_carousel("1")
         scanned_locations = []
         bacteria_locations = []
 
-        background_filename = self.filename.background_filename_generator(self.obj)
-        darkfield_filename = self.filename.darkfield_filename_generator(self.obj)
-        #background_filename =  "10x_background_20250829_M1"
-        #darkfield_filename = "10x_darkfield_20250829_M1"
+        background_filename, background_file_path = self.filename.background_filename_generator(self.obj)
+        darkfield_filename, darkfield_file_path = self.filename.darkfield_filename_generator(self.obj)
 
-        dark_path = f"/home/microscope_auto/Images/{darkfield_filename}.tif"
-        back_path = f"/home/microscope_auto/Images/{background_filename}.tif"
+        dark_path = f"{darkfield_file_path}/{darkfield_filename}.tif"
+        back_path = f"{background_file_path}/{background_filename}.tif"
 
         counter = 0
 
@@ -683,10 +605,13 @@ class Motor:
             counter += 1
 
             self.home_axis("X, Y")
-            self.current_x, self.current_y = self.go_to_random_position()
+            if milestone5:
+                self.current_x, self.current_y = self.go_to_random_position_milestone5()
+            else:
+                self.current_x, self.current_y = self.go_to_random_position()
             self.logger(f"moving to {self.current_x}, {self.current_y}")
 
-            coarse_z_focus, coarse_max_score, coarse_focus_scores = self.focus_scan(160, 400, 20)
+            coarse_z_focus, coarse_max_score, coarse_focus_scores = self.focus_scan(160, 300, 20)
             self.check_stop()
 
             fine_z_focus, fine_max_score, fine_focus_scores = self.focus_scan(coarse_z_focus-6, coarse_z_focus+6, 1)
@@ -698,7 +623,7 @@ class Motor:
             time.sleep(10)
 
             is_there_bacteria = False
-            im_path = f"/home/microscope_auto/Images/{scanning_filename}.tif"
+            im_path = f"{c.PI_IMAGE_DIR}/{scanning_filename}.tif"
             is_there_bacteria, intensity_range, cell_radius = a.cell_counter_alt(im_path, dark_path, back_path, 600.0)
 
             scanned_locations.append((intensity_range, cell_radius, self.current_x, self.current_y))
@@ -722,8 +647,51 @@ class Motor:
 
         return bacteria_locations
 
+    def bacteria_analysis_test(self):
+        self.move_carousel("1")
+        locations = [[122, 14], [131, 18], [137, 17], [137, 10], [145, 10], [138, 22]]
+        filenames = []
+
+        background_filename =  "10x_background_20250909_M1"
+        darkfield_filename = "10x_darkfield_20250909_M1"
+
+        dark_path = f"/home/microscope_auto/Images/{darkfield_filename}.tif"
+        back_path = f"/home/microscope_auto/Images/{background_filename}.tif"
+
+        for i in range(len(locations)):
+            self.home_axis("X, Y")
+            self.current_x = locations[i][0]
+            self.current_y = locations[i][1]
+            self.move_x_axis(self.current_x)
+            self.move_y_axis(self.current_y)
+
+            coarse_z_focus, coarse_max_score, coarse_focus_scores = self.focus_scan(160, 400, 20)
+            self.check_stop()
+
+            fine_z_focus, fine_max_score, fine_focus_scores = self.focus_scan(coarse_z_focus-6, coarse_z_focus+6, 1)
+            self.move_z_axis(fine_z_focus)
+            self.check_stop()
+
+            scanning_filename = self.filename.scanning_filename_generator(self.current_x, self.current_y, fine_z_focus)
+            self.imager.take_rpi_image(10, scanning_filename)
+            time.sleep(10)
+            filenames.append(scanning_filename)
+
+        for i in range(len(filenames)):
+            filename = filenames[i]
+
+            is_there_bacteria = False
+            im_path = f"/home/microscope_auto/Images/{filename}.tif"
+            is_there_bacteria, intensity_range, cell_radius = a.cell_counter_alt(im_path, dark_path, back_path, 600.0)
+
+            print(f"Intensity range: {intensity_range}, Cell Radius: {cell_radius}")
+
+            if is_there_bacteria:
+                print("BACTERIA IDENTIFIED")
+
     def collect_20x_data(self, fov):
-        bacteria_locations = self.search_for_bacteria(fov)
+        #bacteria_locations = self.search_for_bacteria(fov)
+        bacteria_locations = [[122, 16]]
 
         self.check_stop()
         self.focus_view = 0
@@ -761,12 +729,55 @@ class Motor:
 
         self.logger("Data collection finished. All images have been taken and saved to Images folder")
 
+    def collect_40x_data(self, fov):
+        #bacteria_locations = self.search_for_bacteria(fov)
+        bacteria_locations = [[122, 16]]
+
+        self.check_stop()
+        self.focus_view = 0
+        for i in range(len(bacteria_locations)):
+            self.check_stop()
+
+            self.home_axis("X, Y")
+            self.current_x = bacteria_locations[i][0]
+            self.current_y = bacteria_locations[i][1]
+            self.move_x_axis(self.current_x)
+            self.move_y_axis(self.current_y)
+            self.focus_view += 1
+
+            # 40x imaging at x,y
+            self.move_carousel("3")
+            z_focus, _, focus_scores = self.scan_z_axis_for_focus(True)
+            self.complete_zstack(focus_scores)
+            self.check_stop()
+
+            # 40x imaging at x+0.25, y+0.25
+            self.current_x += 0.25
+            self.current_y += 0.25
+            self.move_x_axis(self.current_x)
+            self.move_y_axis(self.current_y)
+
+            z_focus, _, focus_scores = self.scan_z_axis_for_focus(True)
+            self.complete_zstack(focus_scores)
+
+        self.logger("Data collection finished. All images have been taken and saved to Images folder")
+
 if __name__ == "__main__":
     pass
     #file = FileTransfer()
-    #file.set_filename("AR0249_20250724_NA_0.0_F1_S1_M1")
+    #file.set_filename("AR0222_20250909_NA_0.0_NA_S1_M1")
     #motor = Motor(filename = file)
-    #imager = Camera()
+
+    #motor.start_imaging()
+    #motor.home_axis("X")
+    #motor.stop_imaging()
+
+
+    #motor.bacteria_analysis_test()
+
+    #motor.home_axis("X, Y")
+    #motor.move_x_axis(135)
+    #motor.move_y_axis(17)
 
     #motor.search_for_bacteria(1)
     #motor.collect_20x_data()

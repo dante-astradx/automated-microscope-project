@@ -1,3 +1,10 @@
+# ---Microscope ID ---
+MICROSCOPE_ID = "M1"
+MICROSCOPE_USERNAME = "microscope_auto"
+
+# ---Smart Plug IP ---
+SMART_PLUG_IP = "10.116.9.29"
+
 # ---Moonraker Connection ---
 MOONRAKER_IP = "10.116.9.239"
 MOONRAKER_PORT = 7125
@@ -14,9 +21,15 @@ USERNAME = "dantemuzila"
 #USERNAME = "luisartra"
 PORT = 22
 
-# --- Path for uploading images and metadata from pi to laptop --- 
+# --- Path for uploading images and metadata from pi to laptop or dropbox--- 
 LAPTOP_UPLOAD_DIR = "/Users/dantemuzila/Documents/Microscope X-Y Axis Mechanism/lab_GUI"
 #LAPTOP_UPLOAD_DIR = "/Users/luisartra/Documents/Lab Microscope/lab_GUI"
+
+RSYNC_REMOTE = "/Users/dantemuzila/Documents/Microscope X-Y Axis Mechanism/lab_GUI"
+
+RCLONE_REMOTE_ZSTACK = "astradx_dropbox:/Dante Muzila/AstraDx_data/images_raw/CARB-X/Milestone_5"
+RCLONE_REMOTE_NO_SLIDE = "astradx_dropbox:/Dante Muzila/AstraDx_data/images_raw/CARB-X/Milestone_5/no-slide"
+RCLONE_REMOTE_NO_LIGHT = "astradx_dropbox:/Dante Muzila/AstraDx_data/images_raw/CARB-X/Milestone_5/no-light"
 
 # --- Path for Images directory on Pi ---
 PI_IMAGE_DIR = "/home/microscope_auto/Images"
@@ -48,17 +61,18 @@ POINTS_AFTER = 5
 # --- Movement Speed ---
 MOVEMENT_SPEED_MM_S = 50
 
-# --- Microscope Scan Limits (for user input validation) ---
-X_MIN = 100
-X_MAX = 175
-Y_MIN = 0
-Y_MAX = 45
+# --- Microscope Scan Limits ---
+SM1_X_MIN = 138
+SM1_X_MAX = 153
+SM2_X_MIN = 120
+SM2_X_MAX = 135
+SM3_X_MIN = 106
+SM3_X_MAX = 117
+
+Y_MIN = 8
+Y_MAX = 22
 
 # --- Z Axis focus presets ---
-Z_FOCUS_40X_PRESET = 200 #500
-Z_FOCUS_20X_PRESET = 360 #310 #550
-Z_FOCUS_10X_PRESET = 420 #520 #470 #570
-
 Z_FOCUS_NFRAMES = 10
 NFRAMES = 100
 

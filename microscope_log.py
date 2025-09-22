@@ -92,14 +92,15 @@ class StdoutLogger:
 
     def write(self, message):
         if message.strip():
-            log_to_file_only(message)
+            #log_to_file_only(message)
+            log_output(message)
 
     def flush(self):
         pass  # required for compatibility
 
 # Redirect all prints and errors to daily log file (optional)
-sys.stdout = StdoutLogger()
-sys.stderr = StdoutLogger()
+#sys.stdout = StdoutLogger()
+#sys.stderr = StdoutLogger()
 
 # --- Cleanup function for app shutdown ---
 def shutdown_logging():

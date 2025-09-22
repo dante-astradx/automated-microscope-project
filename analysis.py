@@ -222,17 +222,18 @@ def cell_counter_alt(impath, dark_field_impath, background_impath, im_threshold)
 
 
 if __name__ == "__main__":
-    imager = Camera()
+    pass
+    #imager = Camera()
 
-    back_path = "/home/microscope_auto/Images/10x_background_20250829_M1.tif"
-    dark_path = "/home/microscope_auto/Images/10x_darkfield_20250829_M1.tif"
+    #back_path = "/home/microscope_auto/Images/10x_background_20250829_M1.tif"
+    #dark_path = "/home/microscope_auto/Images/10x_darkfield_20250829_M1.tif"
 
-    im1 = "scanning_AR0249_20250724_NA_0.0_F1_S1_M1_137x_15y_164z.tif"
+    #im1 = "scanning_AR0249_20250724_NA_0.0_F1_S1_M1_137x_15y_164z.tif"
 
-    im_list = [im1]
+    #im_list = [im1]
 
-    for im in im_list:
-        impath = f"/home/microscope_auto/Images/{im}"
-        cell_counter_alt(impath, dark_path, back_path, 600)
+    #for im in im_list:
+        #impath = f"/home/microscope_auto/Images/{im}"
+        #cell_counter_alt(impath, dark_path, back_path, 600)
 
-    
+

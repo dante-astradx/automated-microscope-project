@@ -100,10 +100,10 @@ class Camera:
 
         return response
 
-    def take_rpi_image(self, nframes: int, filename: str):
+    def take_rpi_image(self, nframes: int, filename: str, file_path: str = f"{c.PI_IMAGE_DIR}"):
         print(f"\nCommanding camera server to accumulate {nframes} images...", flush=True)
         self.send_command(
-            {"command": "accumulate", "nframes": nframes, "filename": filename}
+            {"command": "accumulate", "nframes": nframes, "filename": filename, "file_path": file_path}
         )
         time.sleep(1)
 
@@ -138,6 +138,7 @@ if __name__ == "__main__":
    #imager.set_exposure_time(11000)
    #time.sleep(5)
 
-   filename = "10x_darkfield_20250829_M1"
+   filename = "no-light_10x_20250919_M1"
+   #file_path = os.path.join(c.PI_IMAGE_DIR, "no-light_20250919_M1", "no-light_20250919_M1_10x")
    imager.take_rpi_image(10, filename)
    time.sleep(10)

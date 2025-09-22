@@ -1,9 +1,10 @@
 import json
 from datetime import datetime
 from pathlib import Path
+import config as c
 
 # File path to persist the log
-LOG_FILE = Path("/home/microscope_auto/project_files/folder_name_log.json")
+LOG_FILE = Path(f"/home/{c.MICROSCOPE_USERNAME}/project_files/folder_name_log.json")
 
 # In-memory log
 log = []
@@ -20,6 +21,9 @@ def save_log():
     """Save the in-memory log to disk."""
     with open(LOG_FILE, "w") as f:
         json.dump(log, f, indent=2)
+
+def check_barcode(barcode: str):
+    return isinstance(barcode, str) and len(barcode) == 6
 
 def add_entry(folder_name):
     """Add a folder name with current date to the log."""
@@ -39,3 +43,7 @@ def clear_log():
     global log
     log = []
     save_log()
+
+if __name__ == "__main__":
+    pass
+    #clear_log()

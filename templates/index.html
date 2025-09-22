@@ -72,11 +72,11 @@
 </head>
 
 <body>
-    <h1>Microscope Control</h1>
+    <h1>Microscope #1 Control</h1>
 
-    <!-- Lab GUI Button -->
-    <form action="{{ url_for('lab_gui') }}" method="post">
-        <button type="submit" class="button lab">Lab GUI</button>
+    <!-- Pre-Imaging Button -->
+    <form action="{{ url_for('pre_imaging') }}" method="post">
+        <button type="submit" class="button lab">Pre-Imaging</button>
     </form>
 
     <!-- Folder Name Input and Start -->
@@ -86,9 +86,9 @@
         <button type="submit" class="button start">Start</button>
     </form>
 
-    <!-- Go Button -->
-    <form action="{{ url_for('next_step') }}" method="post">
-        <button type="submit" class="button go">Go</button>
+    <!-- Toggle Light Button -->
+    <form action="{{ url_for('check_light') }}" method="post">
+        <button type="submit" class="button go">Light On/Off</button>
     </form>
 
     <!-- Stop Button -->
