@@ -24,7 +24,7 @@ class Camera:
 
         self.rpiIp = "127.0.0.1"
         self.rpiUrl = f"http://{self.rpiIp}:9898//picamhq"
-        self.camera_server_script_path = "/home/microscope_auto/project_files/camera_zmq.py"
+        self.camera_server_script_path = f"/home/{c.MICROSCOPE_USERNAME}/project_files/camera_zmq.py"
         self.zmqSocket = None
         self.zmqContext = zmq.Context()
 

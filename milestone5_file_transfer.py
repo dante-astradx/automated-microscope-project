@@ -116,7 +116,7 @@ class FileTransfer5:
             date = entry["date"]
 
             self.upload_to_dropbox(folder_name, self.rclone_remote_zstack)
-            self.upload_to_laptop_rsync(folder_name, False)
+            self.upload_to_laptop_rsync(folder_name, True)
 
     def upload_background(self):
         pattern = "no-slide_*"
@@ -127,7 +127,7 @@ class FileTransfer5:
 
         for folder in matching_folders:
             self.upload_to_dropbox(folder, self.rclone_remote_no_slide)
-            self.upload_to_laptop_rsync(folder, False)
+            self.upload_to_laptop_rsync(folder, True)
 
     def upload_darkfield(self):
         pattern = "no-light_*"
@@ -138,7 +138,7 @@ class FileTransfer5:
 
         for folder in matching_folders:
             self.upload_to_dropbox(folder, self.rclone_remote_no_light)
-            self.upload_to_laptop_rsync(folder, False)
+            self.upload_to_laptop_rsync(folder, True)
 
     def upload_to_laptop_rsync(self, folder_name, delete_files = False):
         local_path = Path(self.pi_image_dir) / folder_name
@@ -203,10 +203,9 @@ class FileTransfer5:
 if __name__ == "__main__":
     pass
     file = FileTransfer5()
-    #file.upload_to_laptop_rsync("M5AAAA", True)
-    #file.upload_to_laptop_rsync("no-light_20250919_M1", True)
-    #file.upload_to_laptop_rsync("no-slide_20250919_M1", True)
-    #file.upload_background()
 
-    dict = {"folder_name": "M5B0PM", "date": "20250922"}
-    file.save_all_data(dict)
+    #--- Test File Transfer ---
+    #file.upload_background()
+    #file.upload_darkfield()
+    #file.upload_to_dropbox("M5AAAA", c.RCLONE_REMOTE_ZSTACK)
+    #file.upload_to_laptop_rsync("M5AAAA", True)

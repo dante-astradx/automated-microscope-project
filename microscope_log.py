@@ -4,6 +4,7 @@ import time
 import threading
 import queue
 from datetime import datetime
+import config as c
 
 # --- Globals shared across app ---
 _log_queue = queue.Queue()        # thread-safe queue for streaming
@@ -12,7 +13,7 @@ _status_message = None
 _stop_event = threading.Event()   # signal for stopping writer thread
 
 # --- Where logs are stored ---
-LOG_DIR = "/home/microscope_auto/project_files"
+LOG_DIR = f"/home/{c.MICROSCOPE_USERNAME}/project_files"
 BASE_LOG_NAME = "microscope_log.txt"
 
 def _current_log_path():

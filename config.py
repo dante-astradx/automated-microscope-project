@@ -16,23 +16,28 @@ GCODE_API_URL = f"http://{MOONRAKER_IP}:{MOONRAKER_PORT}/printer/gcode/script"
 RPI_URL = f"http://{MOONRAKER_IP}:5000//picamhq"
 
 # --- SSH Configuration ---
-HOSTNAME_IP = "192.168.50.3"
-USERNAME = "dantemuzila"
+HOSTNAME_IP = "192.168.50.10"
+USERNAME = "astradx"
 #USERNAME = "luisartra"
 PORT = 22
 
 # --- Path for uploading images and metadata from pi to laptop or dropbox--- 
-LAPTOP_UPLOAD_DIR = "/Users/dantemuzila/Documents/Microscope X-Y Axis Mechanism/lab_GUI"
+LAPTOP_UPLOAD_DIR = "/Users/astradx/Documents/images_raw_backup"
 #LAPTOP_UPLOAD_DIR = "/Users/luisartra/Documents/Lab Microscope/lab_GUI"
 
-RSYNC_REMOTE = "/Users/dantemuzila/Documents/Microscope X-Y Axis Mechanism/lab_GUI"
+RSYNC_REMOTE = "/Users/astradx/Documents/images_raw_backup"
 
 RCLONE_REMOTE_ZSTACK = "astradx_dropbox:/Dante Muzila/AstraDx_data/images_raw/CARB-X/Milestone_5"
 RCLONE_REMOTE_NO_SLIDE = "astradx_dropbox:/Dante Muzila/AstraDx_data/images_raw/CARB-X/Milestone_5/no-slide"
 RCLONE_REMOTE_NO_LIGHT = "astradx_dropbox:/Dante Muzila/AstraDx_data/images_raw/CARB-X/Milestone_5/no-light"
 
 # --- Path for Images directory on Pi ---
-PI_IMAGE_DIR = "/home/microscope_auto/Images"
+PI_IMAGE_DIR = f"/home/{MICROSCOPE_USERNAME}/Images"
+
+# --- Bactera Analysis Thresholds ---
+IM_THRESHOLD_MIN = 400.0
+IM_THRESHOLD_MAX = 1200.0
+CELL_RADIUS_THRESHOLD = 15.0
 
 # --- Target Axis Identifiers ---
 TARGET_AXIS_X = "X"

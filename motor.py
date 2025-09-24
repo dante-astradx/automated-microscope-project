@@ -533,8 +533,8 @@ class Motor:
     def collect_data_milestone5(self, fov):
         self.start_imaging()
 
-        #smear_list = ["SM1", "SM2", "SM3"]
-        smear_list = ["SM2"]
+        smear_list = ["SM1", "SM2", "SM3"]
+        #smear_list = ["SM2"]
         for i in range(len(smear_list)):
             smear_id = smear_list[i]
             self.set_smear_id(smear_id)
@@ -624,7 +624,7 @@ class Motor:
 
             is_there_bacteria = False
             im_path = f"{c.PI_IMAGE_DIR}/{scanning_filename}.tif"
-            is_there_bacteria, intensity_range, cell_radius = a.cell_counter_alt(im_path, dark_path, back_path, 600.0)
+            is_there_bacteria, intensity_range, cell_radius = a.cell_counter_alt(im_path, dark_path, back_path, c.IM_THRESHOLD_MIN)
 
             scanned_locations.append((intensity_range, cell_radius, self.current_x, self.current_y))
             self.logger(f"Intensity range: {intensity_range}, Cell Radius: {cell_radius}")
@@ -637,9 +637,8 @@ class Motor:
                 break
 
             if counter == 10:
-                intensity_range, cell_radius, self.current_x, self.current_y =  max((t for t in scanned_locations if t[0] < 600.0),key=lambda x: x[0])
-                print(scanned_locations)
-                self.logger(f"Stopping search. Highest recorded IR: {intensity_range} at {self.current_x}, {self.current_y}")
+                intensity_range, cell_radius, self.current_x, self.current_y =  self.locations_analysis(scanned_locations)
+                self.logger(f"Stopping search. Best recorded IR: {intensity_range}, Cell Radius: {cell_radius} at {self.current_x}, {self.current_y}")
                 bacteria_locations.append([self.current_x, self.current_y])
                 self.move_x_axis(self.current_x)
                 self.move_y_axis(self.current_y)
@@ -647,47 +646,27 @@ class Motor:
 
         return bacteria_locations
 
-    def bacteria_analysis_test(self):
-        self.move_carousel("1")
-        locations = [[122, 14], [131, 18], [137, 17], [137, 10], [145, 10], [138, 22]]
-        filenames = []
+    def locations_analysis(self, scanned_locations):
+        chosen = None
 
-        background_filename =  "10x_background_20250909_M1"
-        darkfield_filename = "10x_darkfield_20250909_M1"
+        # First choice: intensity range 400–1200, lowest cell radius
+        candidates = [t for t in scanned_locations if c.IM_THRESHOLD_MIN <= t[0] <= c.IM_THRESHOLD_MAX]
+        if candidates:
+            chosen = min(candidates, key=lambda x: x[1])  # lowest cell_radius
 
-        dark_path = f"/home/microscope_auto/Images/{darkfield_filename}.tif"
-        back_path = f"/home/microscope_auto/Images/{background_filename}.tif"
+        # Second choice: intensity range 300–400, highest intensity
+        if chosen is None:
+            candidates = [t for t in scanned_locations if 300.0 <= t[0] < c.IM_THRESHOLD_MIN]
+            if candidates:
+                chosen = max(candidates, key=lambda x: x[0])  # highest intensity
 
-        for i in range(len(locations)):
-            self.home_axis("X, Y")
-            self.current_x = locations[i][0]
-            self.current_y = locations[i][1]
-            self.move_x_axis(self.current_x)
-            self.move_y_axis(self.current_y)
+        # Third choice: intensity > 1200, lowest cell radius
+        if chosen is None:
+            candidates = [t for t in scanned_locations if t[0] > c.IM_THRESHOLD_MAX]
+            if candidates:
+                chosen = min(candidates, key=lambda x: x[1])  # lowest cell_radius
 
-            coarse_z_focus, coarse_max_score, coarse_focus_scores = self.focus_scan(160, 400, 20)
-            self.check_stop()
-
-            fine_z_focus, fine_max_score, fine_focus_scores = self.focus_scan(coarse_z_focus-6, coarse_z_focus+6, 1)
-            self.move_z_axis(fine_z_focus)
-            self.check_stop()
-
-            scanning_filename = self.filename.scanning_filename_generator(self.current_x, self.current_y, fine_z_focus)
-            self.imager.take_rpi_image(10, scanning_filename)
-            time.sleep(10)
-            filenames.append(scanning_filename)
-
-        for i in range(len(filenames)):
-            filename = filenames[i]
-
-            is_there_bacteria = False
-            im_path = f"/home/microscope_auto/Images/{filename}.tif"
-            is_there_bacteria, intensity_range, cell_radius = a.cell_counter_alt(im_path, dark_path, back_path, 600.0)
-
-            print(f"Intensity range: {intensity_range}, Cell Radius: {cell_radius}")
-
-            if is_there_bacteria:
-                print("BACTERIA IDENTIFIED")
+        return chosen
 
     def collect_20x_data(self, fov):
         #bacteria_locations = self.search_for_bacteria(fov)
@@ -764,55 +743,37 @@ class Motor:
 
 if __name__ == "__main__":
     pass
-    #file = FileTransfer()
-    #file.set_filename("AR0222_20250909_NA_0.0_NA_S1_M1")
-    #motor = Motor(filename = file)
+    file = FileTransfer5()
+    file.set_barcode("M5AAAA")
+    motor = Motor(filename = file)
 
-    #motor.start_imaging()
-    #motor.home_axis("X")
-    #motor.stop_imaging()
-
-
-    #motor.bacteria_analysis_test()
-
-    #motor.home_axis("X, Y")
-    #motor.move_x_axis(135)
-    #motor.move_y_axis(17)
-
-    #motor.search_for_bacteria(1)
-    #motor.collect_20x_data()
-    #pattern = "AR0249_*.tif"
-    #file.upload_to_dante_laptop(pattern)
-
+    # --- Exposure Time Pre-set Test ---
     #motor.home_carousel()
+
+    # 10x Pre-set
     #motor.move_carousel("1")
-    #print("taking background image")
-    #back_filename = "AR0222_10x_background"
-    #imager.take_rpi_image(10, back_filename)
-    #time.sleep(10)
 
-    #input("Turn off light and take darkfield image")
-    #dark_filename = "AR0222_10x_darkfield"
-    #imager.take_rpi_image(10, dark_filename)
-    #time.sleep(10)
-    #input("Turn on light and put in slide")
+    # 20x Pre-set
+    #motor.move_carousel("2")
 
-    #list = [[110, 10], [120, 10], [130, 20]]
-    #for i in range(len(list)):
-        #motor.home_axis("X, Y")
-        #motor.move_x_axis(list[i][0])
-        #motor.move_y_axis(list[i][1])
+    # 40x Pre-set
+    #motor.move_carousel("3")
 
-        #super_fine_z_focus, super_fine_max_score, final_focus_scores = motor.scan_z_axis_for_focus()
-        #motor.move_z_axis(super_fine_z_focus)
-        #filename = f"AR0222_IR_test_{list[i][0]}x_{list[i][1]}y_{super_fine_z_focus}z"
-        #imager.take_rpi_image(10, filename)
-        #time.sleep(10)
 
-        #impath = f"/home/microscope_auto/Images/{filename}.tif"
-        #background_path = f"/home/microscope_auto/Images/{back_filename}.tif"
-        #dark_path = f"/home/microscope_auto/Images/{dark_filename}.tif"
+    # --- Test Objective Carousel ---
+    #motor.home_carousel()
+    #motor.move_carousel("2")
+    #time.sleep(5)
+    #motor.move_carousel("3")
+    #time.sleep(5)
+    #motor.move_carousel("1")
+    #time.sleep(5)
+    #motor.move_carousel("3")
+    #time.sleep(5)
+    #motor.move_carousel("2")
 
-        #is_there_bacteria, intensity_range = a.cell_counter_alt(impath, dark_path, background_path, 500.0)
-
-    #motor.grant_video_procedure()
+    # --- Basic Motor Control Test ---
+    #motor.home_axis("X, Y, Z")
+    #motor.move_x_axis(120)
+    #motor.move_y_axis(20)
+    #motor.move_z_axis(200)

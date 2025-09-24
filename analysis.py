@@ -2,7 +2,7 @@ import numpy as np
 import cv2
 import tifffile as tif
 from camera import Camera
-
+import config as c
 import time
 import os
 
@@ -176,8 +176,8 @@ def cell_counter_alt(impath, dark_field_impath, background_impath, im_threshold)
 
     # --- DETECTION PARAMETERS (YOU WILL TWEAK THESE) ---
     IM_THRESHOLD_MIN = im_threshold
-    IM_THRESHOLD_MAX = 1500
-    CELL_RADIUS_THRESHOLD = 25
+    IM_THRESHOLD_MAX = c.IM_THRESHOLD_MAX
+    CELL_RADIUS_THRESHOLD = c.CELL_RADIUS_THRESHOLD
 
     # --- DETECTION LOGIC ---
     is_there_bacteria = False

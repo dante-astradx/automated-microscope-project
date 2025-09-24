@@ -111,9 +111,7 @@ def check_pre_imaging():
     return True
 
 if __name__ == '__main__':
-    #generate_barcode_folders("M5AAAA")
-    #generate_background_folders()
-    #generate_darkfield_folders()
-    #delete_barcode_folders("M5AAAA")
+    pass
 
-    check_pre_imaging()
+    # --- Test Folder Generation ---
+    #generate_barcode_folders("M5AAAA")
