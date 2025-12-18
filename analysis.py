@@ -5,6 +5,9 @@ from camera import Camera
 import config as c
 import time
 import os
+from sklearn.preprocessing import StandardScaler
+from xgboost import XGBClassifier
+import pickle, cloudpickle
 
 def get_focus_score(image):
 # --- Laplacian ---
@@ -149,7 +152,33 @@ def image_corrector_alt(img_path, dark_path, background_path, scaling_factor=409
 
     return corrected_img_float
 
-def cell_counter_alt(impath, dark_field_impath, background_impath, im_threshold):
+def bggr_values(im):
+    b = im[::2, ::2]
+    g1 = im[::2, 1::2]
+    g2 = im[1::2, ::2]
+    r = im[1::2, 1::2]
+    return [b, g1, g2, r]
+
+def extract_features_from_image(corrected_img):
+    _, g1, _, _ = bggr_values(corrected_img)
+    img = g1.copy()
+    # Extract date from image name, use to get no-light and no-slide paths
+    thresh, mask = cv2.threshold(img.astype(np.uint16), 0, 1, cv2.THRESH_BINARY_INV+cv2.THRESH_OTSU)
+    no_foreground_pixels = len(mask[mask==1])
+    no_background_pixels = len(mask[mask==0])
+    ratio_foreground_background_pixels = no_foreground_pixels / no_background_pixels
+    intensity_range = np.median(img[mask==0]) - np.median(img[mask==1])
+    no_foreground_objects, labels, stats, centroids = cv2.connectedComponentsWithStats(mask.astype(np.uint8), connectivity=4)
+    object_areas = stats[:, -1]
+    num_cell_sized_objects = len(np.where((object_areas > 8) & (object_areas < 1000))[0])
+    ratio_cell_sized_objects = num_cell_sized_objects / len(object_areas)
+    largest_object_area = np.max(object_areas)
+    object_radius_med = np.median(np.sqrt(object_areas))
+    background_var = np.var(img[mask==0])
+    img_features = ratio_foreground_background_pixels, intensity_range, object_radius_med, ratio_cell_sized_objects, background_var, largest_object_area
+    return list(img_features)
+
+def is_good_for_ID(impath, dark_field_impath, background_impath):
     if not os.path.exists(impath):
         print(f"Error: Sample image file not found at '{impath}'. Cannot perform cell count.", flush=True)
         return False
@@ -162,76 +191,47 @@ def cell_counter_alt(impath, dark_field_impath, background_impath, im_threshold)
 
     print(f"\n--- Analyzing image: {os.path.basename(impath)} ---", flush=True)
 
-    corrected_img_f32 = image_corrector_alt(impath, dark_field_impath, background_impath, scaling_factor=4095.0)
+    corrected_img = image_corrector_alt(impath, dark_field_impath, background_impath, scaling_factor=4095.0)
 
-    if corrected_img_f32 is None:
+    if corrected_img is None:
         print("Error: Image correction failed. Cannot proceed", flush=True)
         return False
 
-    bg_percentile = np.percentile(corrected_img_f32, 95)
-    fg_percentile = np.percentile(corrected_img_f32, 5)
+    X_features = extract_features_from_image(corrected_img)
 
-    intensity_range = bg_percentile - fg_percentile
-    print(f"Background percentile: {bg_percentile:.3f}, Foreground median: {fg_percentile:.3f}, Intensity range (Bg - Fg): {intensity_range:.3f}")
+    X_features = np.array(X_features)
+    X_features = X_features.reshape((1, X_features.shape[0]))
 
-    # --- DETECTION PARAMETERS (YOU WILL TWEAK THESE) ---
-    IM_THRESHOLD_MIN = im_threshold
-    IM_THRESHOLD_MAX = c.IM_THRESHOLD_MAX
-    CELL_RADIUS_THRESHOLD = c.CELL_RADIUS_THRESHOLD
+    with open("scaler.pkl", "rb") as f:
+        scaler = pickle.load(f)
 
-    # --- DETECTION LOGIC ---
-    is_there_bacteria = False
+    X_new_normalized = scaler.transform(X_features)
+    # Load XGBoost model
+    xgb_model = XGBClassifier()
+    xgb_model.load_model('xgb_image_detection.json')
 
-    corrected_img_f32_blurred = cv2.GaussianBlur(corrected_img_f32, (3, 3), 0)
-    thresh, mask = cv2.threshold(corrected_img_f32_blurred.astype(np.uint16), 0, 1, cv2.THRESH_BINARY_INV+cv2.THRESH_OTSU)
+    y_val = xgb_model.predict(X_new_normalized)
 
-    no_foreground_objects, labels = cv2.connectedComponents(mask.astype(np.uint8), connectivity=8)
-    no_foreground_pixels = np.sum(mask)
-
-    cell_area = no_foreground_pixels / no_foreground_objects
-    cell_radius = np.sqrt(cell_area / np.pi)
-    #print(f"No. foreground objects: {no_foreground_objects}")
-    #print(f"No. foreground pixels: {no_foreground_pixels}")
-    print(f"Average size (radius) of cell: {cell_radius:.1f}")
-
-    if intensity_range > IM_THRESHOLD_MIN and intensity_range < IM_THRESHOLD_MAX:
-        #corrected_img_f32_blurred = cv2.GaussianBlur(corrected_img_f32, (3, 3), 0)
-        #thresh, mask = cv2.threshold(corrected_img_f32_blurred.astype(np.uint16), 0, 1, cv2.THRESH_BINARY_INV+cv2.THRESH_OTSU)
-
-        #no_foreground_objects, labels = cv2.connectedComponents(mask.astype(np.uint8), connectivity=8)
-        #no_foreground_pixels = np.sum(mask)
-
-        #cell_area = no_foreground_pixels / no_foreground_objects
-        #cell_radius = np.sqrt(cell_area / np.pi)
-
-        #print(f"No. foreground objects: {no_foreground_objects}")
-        #print(f"No. foreground pixels: {no_foreground_pixels}")
-        #print(f"Average size (radius) of cell: {cell_radius:.1f}")
-        if cell_radius < CELL_RADIUS_THRESHOLD:
-            is_there_bacteria = True
-            print("BACTERIA IDENTIFIED")
-        else:
-            print("Average cell size is too large. Continuing search")
-        #is_there_bacteria = True
-        #print("\nBACTERIA IDENTIFIED")
-    else:
-        print("\nNo objects found in this image. Continuing search")
-
-    print("--- Analysis Complete ---", flush=True)
-    return is_there_bacteria, round(intensity_range, 2), round(cell_radius, 2)
+    is_there_bacteria = bool(y_val)
+   # returns True if img good for ID, False if not
+    return is_there_bacteria
 
 
 if __name__ == "__main__":
     pass
-    #imager = Camera()
+    imager = Camera()
 
-    #back_path = "/home/microscope_auto/Images/10x_background_20250829_M1.tif"
-    #dark_path = "/home/microscope_auto/Images/10x_darkfield_20250829_M1.tif"
+    back_path = "/home/microscope_auto/Images/no-slide_20251121_M1/no-slide_20251121_M1_10x/no-slide_20251121_M1_10x.tif"
+    dark_path = "/home/microscope_auto/Images/no-light_20251121_M1/no-light_20251121_M1_10x/no-light_20251121_M1_10x.tif"
 
-    #im1 = "scanning_AR0249_20250724_NA_0.0_F1_S1_M1_137x_15y_164z.tif"
+    #filename = "scanning_M5I2UQ_20251107_M1_140x_15y"
+    filename = "scanning_M5I2UQ_20251121_M1_SM2_131x_17y_406z"
+    #imager.take_rpi_image(100, filename)
+    #time.sleep(15)
 
-    #im_list = [im1]
-
+    impath = f"{c.PI_IMAGE_DIR}/{filename}.tif"
+    is_there_bacteria = is_good_for_ID(impath, dark_path, back_path)
+    print(is_there_bacteria)
     #for im in im_list:
         #impath = f"/home/microscope_auto/Images/{im}"
         #cell_counter_alt(impath, dark_path, back_path, 600)

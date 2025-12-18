@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, datetime
 import config as c
 import os
 import paramiko
@@ -10,6 +10,7 @@ import shutil
 import logging
 from pathlib import Path
 from microscope_log import log_output, log_to_file_only, update_status
+import csv
 
 class FileTransfer5:
     def __init__(self, logger=print):
@@ -22,6 +23,7 @@ class FileTransfer5:
         self.second_folder = None
         self.third_folder = None
         self.microscope_id = c.MICROSCOPE_ID
+        self.csv_filename = None
 
         self.hostname = c.HOSTNAME_IP
         self.username = c.USERNAME
@@ -33,6 +35,8 @@ class FileTransfer5:
         self.rclone_remote_no_slide = c.RCLONE_REMOTE_NO_SLIDE
         self.rclone_remote_no_light = c.RCLONE_REMOTE_NO_LIGHT
         self.rsync_remote = c.RSYNC_REMOTE
+        self.rsync_remote_no_slide = c.RSYNC_REMOTE_NO_SLIDE
+        self.rsync_remote_no_light = c.RSYNC_REMOTE_NO_LIGHT
 
         self.ssh = None
         self.sftp = None
@@ -46,8 +50,41 @@ class FileTransfer5:
         self.second_folder = f"{self.barcode}_{self.date}"
         self.third_folder = f"{self.barcode}_{self.date}_{self.microscope_id}"
 
+        self.csv_filename = f"{barcode}_10x_quality.csv"
+
     def set_smear_id(self, smear_id):
         self.smear_id = f"{smear_id}"
+
+    # Appending to csv file
+    def append_csv(self, x_coord: float, y_coord: float, z_coord: float, good_fov: bool | str):
+        # 1. Resolve the CSV path
+        csv_path = (
+            Path(self.pi_image_dir) /
+            self.first_folder /
+            self.second_folder /
+            self.third_folder /
+            self.csv_filename
+        )
+
+        dt = datetime.now().isoformat(timespec="seconds")
+
+        # Normalise the "Good FOV?" value – we keep whatever the user passes
+        good_fov_str = str(good_fov)
+
+        row = [
+            str(x_coord),
+            str(y_coord),
+            str(z_coord),
+            self.smear_id,
+            self.microscope_id,
+            dt,
+            good_fov_str,
+        ]
+
+        # 4. Append the row
+        with csv_path.open(mode="a", newline="", encoding="utf-8") as fh:
+            writer = csv.writer(fh)
+            writer.writerow(row)
 
     # Filename generator
     def data_filename_generator(self, focus_view, obj, x_pos, y_pos, z_pos):
@@ -115,8 +152,8 @@ class FileTransfer5:
             folder_name = entry["folder_name"]
             date = entry["date"]
 
-            self.upload_to_dropbox(folder_name, self.rclone_remote_zstack)
-            self.upload_to_laptop_rsync(folder_name, True)
+            #self.upload_to_dropbox(folder_name, self.rclone_remote_zstack, True)
+            self.upload_to_laptop_rsync(folder_name, self.rsync_remote, True)
 
     def upload_background(self):
         pattern = "no-slide_*"
@@ -126,8 +163,8 @@ class FileTransfer5:
         print(matching_folders)
 
         for folder in matching_folders:
-            self.upload_to_dropbox(folder, self.rclone_remote_no_slide)
-            self.upload_to_laptop_rsync(folder, True)
+            #self.upload_to_dropbox(folder, self.rclone_remote_no_slide)
+            self.upload_to_laptop_rsync(folder, self.rsync_remote_no_slide, True)
 
     def upload_darkfield(self):
         pattern = "no-light_*"
@@ -137,16 +174,16 @@ class FileTransfer5:
         print(matching_folders)
 
         for folder in matching_folders:
-            self.upload_to_dropbox(folder, self.rclone_remote_no_light)
-            self.upload_to_laptop_rsync(folder, True)
+            #self.upload_to_dropbox(folder, self.rclone_remote_no_light)
+            self.upload_to_laptop_rsync(folder, self.rsync_remote_no_light, True)
 
-    def upload_to_laptop_rsync(self, folder_name, delete_files = False):
+    def upload_to_laptop_rsync(self, folder_name, remote_path, delete_files = False):
         local_path = Path(self.pi_image_dir) / folder_name
         if not local_path.exists():
             self.logger(f"Folder {folder_name} does not exist in {self.pi_image_dir}.")
             return False
 
-        remote = f"{self.username}@{self.hostname}:{self.rsync_remote}"
+        remote = f"{self.username}@{self.hostname}:{remote_path}"
         rsync_cmd = ["rsync", "-avz", str(local_path), remote]
 
         self.logger(f"Starting rsync to laptop: {rsync_cmd}")
@@ -162,7 +199,7 @@ class FileTransfer5:
             self.logger(f"Error during rsync copy: {e}")
             return False
 
-    def upload_to_dropbox(self, folder_name, remote_path):
+    def upload_to_dropbox(self, folder_name, remote_path, delete_files = False):
         local_path = Path(self.pi_image_dir) / folder_name
         if not local_path.exists():
             self.logger(f"Folder {folder_name} does not exist in {self.pi_image_dir}.")
@@ -173,6 +210,11 @@ class FileTransfer5:
         try:
             subprocess.run(rclone_cmd, check=True)
             self.logger(f"Successfully copied {folder_name} to Dropbox")
+
+            if delete_files:
+                shutil.rmtree(local_path)
+                self.logger(f"Deleted local folder {local_path}")
+            return True
         except subprocess.CalledProcessError as e:
             self.logger(f"Error during rclone copy: {e}")
             return False
@@ -181,7 +223,8 @@ class FileTransfer5:
         self.logger("Removing extra images from zstack")
         keep_range = range(z_focus - points_before, z_focus + points_after + 1)
 
-        pi_files = os.listdir(self.pi_image_dir)
+        folder_path = self.data_path_generator(focus_view, obj)
+        pi_files = os.listdir(folder_path)
         pattern = f"{self.barcode}_{self.date}_{self.microscope_id}_unstained_{self.smear_id}_{obj}x_{focus_view}_{current_x}x_{current_y}y_*.*"
         matching_files = fnmatch.filter(pi_files, pattern)
         if not matching_files:
@@ -196,7 +239,7 @@ class FileTransfer5:
                 continue  # skip malformed filenames
 
             if z not in keep_range:
-                file_path = os.path.join(self.pi_image_dir, filename)
+                file_path = os.path.join(folder_path, filename)
                 os.remove(file_path)
                 self.logger(f"Deleted: {filename}")
 
@@ -209,3 +252,10 @@ if __name__ == "__main__":
     #file.upload_darkfield()
     #file.upload_to_dropbox("M5AAAA", c.RCLONE_REMOTE_ZSTACK)
     #file.upload_to_laptop_rsync("M5AAAA", True)
+
+    #file.set_barcode("M5I2UQ")
+    #file.set_smear_id("SM2")
+    #file.image_cleanup(1, 40, 393, 130, 13, 15, 5)
+
+    rsync_remote = c.RSYNC_REMOTE
+    file.upload_to_laptop_rsync("M5RCT6", rsync_remote, True)

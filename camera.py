@@ -9,7 +9,9 @@ import json
 import paramiko
 import numpy as np
 from datetime import datetime
+from PIL import Image
 import config as c
+import tifffile
 # from camera_zmq import OutputZMQ
 
 camera_dict = {
@@ -133,12 +135,42 @@ class Camera:
         score = max(score1['focus_score'], score2['focus_score'], score3['focus_score'])
         return score
 
+    def update_latest_image_to_jpg(self, tif_path):
+        try:
+            # Ensure the file exists
+            if not os.path.exists(tif_path):
+                raise FileNotFoundError(f"TIF file not found: {tif_path}")
+
+            # Read the .tif image
+            img = tifffile.imread(tif_path)
+
+            # Normalize if necessary (in case image is 12-bit or 16-bit)
+            if img.dtype != np.uint8:
+                img = (img / img.max() * 255).astype(np.uint8)
+
+            # Convert grayscale to RGB for compatibility with browsers
+            if img.ndim == 2:
+                img = np.stack([img] * 3, axis=-1)
+
+            # Define output path (does not overwrite the .tif)
+            output_path = os.path.join(c.PI_IMAGE_DIR, "latest_image.jpg")
+
+            # Save as JPEG
+            Image.fromarray(img).save(output_path, "JPEG", quality=85)
+
+            return output_path
+
+        except Exception as e:
+            print(f"Error converting TIF to JPEG: {e}")
+            return None
+
 if __name__ == "__main__":
    imager = Camera()
    #imager.set_exposure_time(11000)
    #time.sleep(5)
 
-   filename = "no-light_10x_20250919_M1"
+   filename = "M5NBMH_20251105_M1_unstained_SM3_40x_1_113x_21y_NAz"
    #file_path = os.path.join(c.PI_IMAGE_DIR, "no-light_20250919_M1", "no-light_20250919_M1_10x")
-   imager.take_rpi_image(10, filename)
-   time.sleep(10)
+   imager.take_rpi_image(100, filename)
+   time.sleep(15)
+

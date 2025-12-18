@@ -1,8 +1,9 @@
-from flask import Flask, render_template, request, redirect, url_for, flash, jsonify, Response
-from folder_name_logger import add_entry, clear_log, clear_last_entry, check_barcode
+from flask import Flask, render_template, request, redirect, url_for, flash, jsonify, Response, send_file
+from folder_name_logger import add_entry, clear_log, clear_last_entry, check_barcode, lookup_smear_coordinates, csv_lookup
 from microscope_log import log_output, update_status, get_log_queue, get_status_message
 from folder_generator import generate_barcode_folders, generate_background_folders, generate_darkfield_folders, delete_barcode_folders, check_pre_imaging
 from light_controller import toggle_light
+from google_sheet_editor import log_milestone_run
 import subprocess
 import time
 import json
@@ -10,6 +11,8 @@ import threading
 from motor import Motor
 from file_transfer import FileTransfer
 from milestone5_file_transfer import FileTransfer5
+from pathlib import Path
+import config as c
 
 app = Flask(__name__)
 app.secret_key = "a_very_secret_key_here"
@@ -57,9 +60,14 @@ def start():
     global motor_instance, current_step
 
     folder_name = request.form["folder_name"]
+    selected_smears = request.form.getlist("smears")
 
     if not folder_name:
         flash("Barcode is required to start!")
+        return redirect(url_for("index"))
+
+    if len(selected_smears) == 0:
+        flash("You must select at least one smear to image!")
         return redirect(url_for("index"))
 
     if not check_pre_imaging():
@@ -77,15 +85,22 @@ def start():
         flash("Barcode is not in correct format")
         return redirect(url_for("index"))
 
-    generate_barcode_folders(folder_name)
+    generate_barcode_folders(folder_name, selected_smears)
 
     file = FileTransfer5(logger=log_output)
     file.set_barcode(folder_name)
 
     motor_instance = Motor(filename=file, logger=log_output)
 
+    smear_ids, coords = csv_lookup(folder_name)
+    #log_milestone_run(folder_name, "10x scan")
+    log_milestone_run(folder_name, "10, 20, 40x zstack")
+
     def data_task():
-        motor_instance.collect_data_milestone5(1)
+        #motor_instance.smear_analysis_test(selected_smears)
+        #motor_instance.collect_data_milestone2()
+        #motor_instance.collect_data_milestone5(1, selected_smears)
+        motor_instance.collect_data_milestone5_xy(1, smear_ids, coords)
         update_status("Data collection complete")
 
     threading.Thread(target=data_task).start()
@@ -115,6 +130,25 @@ def pre_imaging():
 
     #current_step = "background_in_progress"
     return redirect(url_for("index"))
+
+@app.route("/test_carousel", methods=["POST"])
+def test_carousel():
+    global motor_instance
+
+    file = FileTransfer5(logger=log_output)
+    motor_instance = Motor(filename=file, logger=log_output)
+
+    motor_instance.test_carousel()
+
+    return redirect(url_for("index"))
+
+LATEST_IMAGE_PATH = Path(f"{c.PI_IMAGE_DIR}/latest_image.jpg")
+@app.route("/latest_image")
+def latest_image():
+    if LATEST_IMAGE_PATH.exists():
+        return send_file(str(LATEST_IMAGE_PATH), mimetype="image/jpeg")
+    else:
+        return "No image captured yet", 404
 
 @app.route("/save_all", methods=["POST"])
 def save_all():

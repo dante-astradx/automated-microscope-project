@@ -3,10 +3,11 @@ import shutil
 import os
 from datetime import datetime
 import config as c
+import csv
 
 microscope_id = c.MICROSCOPE_ID
 
-def generate_barcode_folders(barcode: str):
+def generate_barcode_folders(barcode: str, smear_list):
 
     # Create folder structure for given barcode.
     # Returns path to the microscope-level directory.
@@ -28,7 +29,7 @@ def generate_barcode_folders(barcode: str):
     microscope_dir.mkdir(parents=True, exist_ok=True)
 
     # Step 4: Nine subfolders for SM1–SM3 and objectives 10,20,40
-    smear_ids = ["SM1", "SM2", "SM3"]
+    smear_ids = smear_list
     objectives = [10, 20, 40]
 
     for smear_id in smear_ids:
@@ -37,7 +38,38 @@ def generate_barcode_folders(barcode: str):
             subfolder = microscope_dir / folder_name
             subfolder.mkdir(parents=True, exist_ok=True)
 
+    csv_name, csv_path = create_quality_csv(barcode, microscope_dir)
+
     return microscope_dir
+
+def create_quality_csv(barcode, directory):
+    # 1. Verify that the target directory exists
+    if not directory.is_dir():
+        raise FileNotFoundError(
+            f"Microscope directory '{microscope_dir}' does not exist."
+        )
+
+    # 2. Build the destination path
+    csv_name = f"{barcode}_10x_quality.csv"
+    csv_path = directory / csv_name
+
+    # 3. Define header columns
+    header = [
+        "x_coord",
+        "y_coord",
+        "z_coord",
+        "Smear ID",
+        "Microscope ID",
+        "date/time",
+        "Good FOV?",
+    ]
+
+    # 4. Write the header to the file
+    with csv_path.open(mode="w", newline="", encoding="utf-8") as fh:
+        writer = csv.writer(fh)
+        writer.writerow(header)
+
+    return csv_name, csv_path
 
 def generate_background_folders():
     home_dir = Path(c.PI_IMAGE_DIR)
@@ -114,4 +146,4 @@ if __name__ == '__main__':
     pass
 
     # --- Test Folder Generation ---
-    #generate_barcode_folders("M5AAAA")
+    generate_barcode_folders("M5I2UQ", ["SM1", "SM2", "SM3"])

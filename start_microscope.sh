@@ -1,6 +1,6 @@
 #!/bin/bash
 # Activate the virtual environment
-source /home/microscope_auto/pyenv/rpitest/bin/activate
+source /home/microscope_auto/pyenv/rpitest_v2/bin/activate
 
 # Start camera_zmq.py in the background
 python /home/microscope_auto/project_files/camera_zmq.py &

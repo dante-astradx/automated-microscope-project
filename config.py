@@ -25,14 +25,31 @@ PORT = 22
 LAPTOP_UPLOAD_DIR = "/Users/astradx/Documents/images_raw_backup"
 #LAPTOP_UPLOAD_DIR = "/Users/luisartra/Documents/Lab Microscope/lab_GUI"
 
-RSYNC_REMOTE = "/Users/astradx/Documents/images_raw_backup"
+#RSYNC_REMOTE = "/Users/astradx/ArnaoutLab Dropbox/Dante Muzila/AstraDx_data/images_raw/CARB-X/Milestone_5/Data_Collection_3"
+#RSYNC_REMOTE = "/Users/astradx/ArnaoutLab Dropbox/Dante Muzila/AstraDx_data/images_raw/CARB-X/Milestone_1"
+RSYNC_REMOTE = "/Users/astradx/ArnaoutLab Dropbox/Dante Muzila/AstraDx_data/images_raw/CARB-X/Milestone_3/Data_Collection_1"
+RSYNC_REMOTE_NO_SLIDE = "/Users/astradx/ArnaoutLab Dropbox/Dante Muzila/AstraDx_data/images_raw/CARB-X/Milestone_3/no-slide"
+RSYNC_REMOTE_NO_LIGHT = "/Users/astradx/ArnaoutLab Dropbox/Dante Muzila/AstraDx_data/images_raw/CARB-X/Milestone_3/no-light"
 
-RCLONE_REMOTE_ZSTACK = "astradx_dropbox:/Dante Muzila/AstraDx_data/images_raw/CARB-X/Milestone_5"
+RCLONE_REMOTE_ZSTACK = "astradx_dropbox:/Dante Muzila/AstraDx_data/images_raw/CARB-X/Milestone_5/Data_Collection_2"
 RCLONE_REMOTE_NO_SLIDE = "astradx_dropbox:/Dante Muzila/AstraDx_data/images_raw/CARB-X/Milestone_5/no-slide"
 RCLONE_REMOTE_NO_LIGHT = "astradx_dropbox:/Dante Muzila/AstraDx_data/images_raw/CARB-X/Milestone_5/no-light"
 
 # --- Path for Images directory on Pi ---
 PI_IMAGE_DIR = f"/home/{MICROSCOPE_USERNAME}/Images"
+
+# --- Filepaths & Sheet Names for Google Sheets ---
+SERVICE_ACCOUNT_FILE = f"/home/{MICROSCOPE_USERNAME}/project_files/microscope_service_account.json"
+SPREADSHEET_ID = "1gUmrDrF3YknFheusJniDqtBOSKX-qDEOlAT4nozwdL8"
+
+#TAB_MASTER = "Milestone 5 - Imaging Master List"
+#TAB_LOG = "Milestone 5 - Imaging Log"
+
+TAB_MASTER = "Milestone 3 - Imaging Master List"
+TAB_LOG = "Milestone 3 - Imaging Log"
+
+#TAB_MASTER = "Milestone 1 - Imaging Master List"
+#TAB_LOG = "Milestone 1 - Imaging Log"
 
 # --- Bactera Analysis Thresholds ---
 IM_THRESHOLD_MIN = 400.0
@@ -78,6 +95,13 @@ Y_MIN = 8
 Y_MAX = 22
 
 # --- Z Axis focus presets ---
+FOCUS_PRESET_10X = 150
+FOCUS_PRESET_20X = 200
+FOCUS_PRESET_40X = 150
+
+FOCUS_OFFSET_20X_FROM_10X_PRESET = 50
+FOCUS_OFFSET_40X_FROM_10X_PRESET = 0
+
 Z_FOCUS_NFRAMES = 10
 NFRAMES = 100
 

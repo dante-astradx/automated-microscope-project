@@ -27,6 +27,18 @@
             overflow-y: auto; 
             white-space: pre-wrap;
         }
+        /* Added styling for the latest image section */
+        #latest-image-container {
+            margin-top: 30px;
+            text-align: center;
+        }
+        #latestImage {
+            border: 2px solid #ccc;
+            border-radius: 6px;
+            margin-top: 10px;
+            max-width: 90%;
+            height: auto;
+        }
     </style>
     <script>
         // Save Images (AJAX)
@@ -67,12 +79,22 @@
                 outputDiv.textContent += event.data + "\n";
                 outputDiv.scrollTop = outputDiv.scrollHeight; // auto-scroll
             };
+            // Auto-refresh the latest image every 15 seconds
+            const img = document.getElementById("latestImage");
+            setInterval(() => {
+                img.src = `/latest_image?${new Date().getTime()}`; // cache-busting
+            }, 15000);
         }
     </script>
 </head>
 
 <body>
     <h1>Microscope #1 Control</h1>
+
+    <!-- Test Carousel Button -->
+    <form action="{{ url_for('test_carousel') }}" method="post">
+        <button type="submit" class="button lab">Test Carousel</button>
+    </form>
 
     <!-- Pre-Imaging Button -->
     <form action="{{ url_for('pre_imaging') }}" method="post">
@@ -83,6 +105,18 @@
     <form action="{{ url_for('start') }}" method="post">
         <label for="folder_name">Enter Folder Name:</label>
         <input type="text" id="folder_name" name="folder_name" required>
+
+        <br><br>
+        <label>Select Smear(s):</label><br>
+        <input type="checkbox" id="sm1" name="smears" value="SM1">
+        <label for="sm1">Smear 1</label><br>
+
+        <input type="checkbox" id="sm2" name="smears" value="SM2">
+        <label for="sm2">Smear 2</label><br>
+
+        <input type="checkbox" id="sm3" name="smears" value="SM3">
+        <label for="sm3">Smear 3</label><br><br>
+
         <button type="submit" class="button start">Start</button>
     </form>
 
@@ -117,5 +151,12 @@
     <!-- New Terminal Output Window -->
     <h2>Terminal Output</h2>
     <div id="terminal-output"></div>
+
+    <!-- New Latest Image Section -->
+    <div id="latest-image-container">
+        <h2>Latest Captured Image</h2>
+        <img id="latestImage" src="/latest_image" alt="Latest microscope image">
+    </div>
+
 </body>
 </html>
