@@ -1,13 +1,21 @@
 archive.py
+config.py
+microscope_log.txt.*
+microscope_service_account.json
 *.py~
+*.sh~
 endstop_test.py
-*.json
+folder_name_log.json
 main_script.py
-*.txt.*
+*.c~
+__pycache__/
+*.pyc
 output.log
+raw.dat.npy
+slides_to_image.json
 test1.py
 test2.py
 test3.py
-*.jpg
 test_script.py
+*.jpg
 

@@ -25,31 +25,12 @@ PORT = 22
 LAPTOP_UPLOAD_DIR = "/Users/astradx/Documents/images_raw_backup"
 #LAPTOP_UPLOAD_DIR = "/Users/luisartra/Documents/Lab Microscope/lab_GUI"
 
-#RSYNC_REMOTE = "/Users/astradx/ArnaoutLab Dropbox/Dante Muzila/AstraDx_data/images_raw/CARB-X/Milestone_5/Data_Collection_3"
-#RSYNC_REMOTE = "/Users/astradx/ArnaoutLab Dropbox/Dante Muzila/AstraDx_data/images_raw/CARB-X/Milestone_1"
-RSYNC_REMOTE = "/Users/astradx/ArnaoutLab Dropbox/Dante Muzila/AstraDx_data/images_raw/CARB-X/Milestone_3/Data_Collection_1"
-RSYNC_REMOTE_NO_SLIDE = "/Users/astradx/ArnaoutLab Dropbox/Dante Muzila/AstraDx_data/images_raw/CARB-X/Milestone_3/no-slide"
-RSYNC_REMOTE_NO_LIGHT = "/Users/astradx/ArnaoutLab Dropbox/Dante Muzila/AstraDx_data/images_raw/CARB-X/Milestone_3/no-light"
-
-RCLONE_REMOTE_ZSTACK = "astradx_dropbox:/Dante Muzila/AstraDx_data/images_raw/CARB-X/Milestone_5/Data_Collection_2"
-RCLONE_REMOTE_NO_SLIDE = "astradx_dropbox:/Dante Muzila/AstraDx_data/images_raw/CARB-X/Milestone_5/no-slide"
-RCLONE_REMOTE_NO_LIGHT = "astradx_dropbox:/Dante Muzila/AstraDx_data/images_raw/CARB-X/Milestone_5/no-light"
-
 # --- Path for Images directory on Pi ---
 PI_IMAGE_DIR = f"/home/{MICROSCOPE_USERNAME}/Images"
 
 # --- Filepaths & Sheet Names for Google Sheets ---
 SERVICE_ACCOUNT_FILE = f"/home/{MICROSCOPE_USERNAME}/project_files/microscope_service_account.json"
 SPREADSHEET_ID = "1gUmrDrF3YknFheusJniDqtBOSKX-qDEOlAT4nozwdL8"
-
-#TAB_MASTER = "Milestone 5 - Imaging Master List"
-#TAB_LOG = "Milestone 5 - Imaging Log"
-
-TAB_MASTER = "Milestone 3 - Imaging Master List"
-TAB_LOG = "Milestone 3 - Imaging Log"
-
-#TAB_MASTER = "Milestone 1 - Imaging Master List"
-#TAB_LOG = "Milestone 1 - Imaging Log"
 
 # --- Bactera Analysis Thresholds ---
 IM_THRESHOLD_MIN = 400.0
@@ -82,6 +63,16 @@ POINTS_AFTER = 5
 
 # --- Movement Speed ---
 MOVEMENT_SPEED_MM_S = 50
+
+# --- XY Offsets ---
+X_OFFSET = 0
+Y_OFFSET = 0
+
+# --- Microscope Smear Center ---
+SLIDE_1_SM1_CENTER_X = 146
+SLIDE_1_SM2_CENTER_X = 128
+SLIDE_1_SM3_CENTER_X = 111
+SLIDE_1_CENTER_Y = 14
 
 # --- Microscope Scan Limits ---
 SM1_X_MIN = 138

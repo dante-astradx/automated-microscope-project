@@ -113,7 +113,7 @@ def get_centered_im(im):
     cim = np.right_shift(cim, 4).astype(np.uint8)
     return cim
 
-def image_corrector_alt(img_path, dark_path, background_path, scaling_factor=4095.0):
+def image_corrector(img_path, dark_path, background_path, scaling_factor=4095.0):
     print(f"\n--- Performing Image Correction for '{os.path.basename(img_path)}' ---", flush=True)
 
     try:
@@ -151,6 +151,53 @@ def image_corrector_alt(img_path, dark_path, background_path, scaling_factor=409
     corrected_img_float = corrected_img_float[:,:-9]
 
     return corrected_img_float
+
+def check_focus(folder_path, x_coord, y_coord, nolight_path, noslide_path):
+    x_str = f"{float(x_coord)}"
+    y_str = f"{float(y_coord)}"
+
+    search_pattern = f"_{x_str}x_{y_str}y_"
+    print(f"Searching for z-stack files matching {search_pattern} in folder path {folder_path}")
+
+    zstack_files = [
+        os.path.join(folder_path, f)
+        for f in os.listdir(folder_path)
+        if f.endswith('.tif') and search_pattern in f
+    ]
+
+    if not zstack_files:
+        print(f"No .tif images found for {search_pattern} in {folder_path}")
+        return False
+
+    zstack_stdevs = []
+
+    # Process each image in the stack
+    for file_path in zstack_files:
+        # Correct the image (flat-field/dark-frame subtraction)
+        corrected_img = image_corrector(file_path, nolight_path, noslide_path)
+
+        # Calculate standard deviation
+        img_stdev = np.std(corrected_img)
+        zstack_stdevs.append(img_stdev)
+
+        # QC Check 1: Fail immediately if any single image is too dark/blurry
+        if img_stdev < 50:
+            print(f"QC Fail: {os.path.basename(file_path)} stdev ({img_stdev:.2f}) < 150")
+            return False
+
+    # QC Check 2: The 'Focus Peak' Check
+    # If the standard deviation of the standard deviations is low, 
+    # the whole stack is equally blurry (no focal point found).
+    if len(zstack_stdevs) < 2:
+        return False
+
+    zstdev_stdev = np.std(zstack_stdevs)
+    if zstdev_stdev < 0.1:
+        print(f"QC Fail: Stack variation ({zstdev_stdev:.4f}) < 1. No focal peak detected.")
+        return False
+
+    print(f"QC Pass: Found {len(zstack_files)} images. Peak variance: {zstdev_stdev:.2f}")
+    return True
 
 def bggr_values(im):
     b = im[::2, ::2]
@@ -221,17 +268,23 @@ if __name__ == "__main__":
     pass
     imager = Camera()
 
-    back_path = "/home/microscope_auto/Images/no-slide_20251121_M1/no-slide_20251121_M1_10x/no-slide_20251121_M1_10x.tif"
-    dark_path = "/home/microscope_auto/Images/no-light_20251121_M1/no-light_20251121_M1_10x/no-light_20251121_M1_10x.tif"
+    back_path = "/home/microscope_auto/Images/no-slide_20260225_M1/no-slide_20260225_M1_40x/no-slide_20260225_M1_40x.tif"
+    dark_path = "/home/microscope_auto/Images/no-light_20260225_M1/no-light_20260225_M1_40x/no-light_20260225_M1_40x.tif"
 
     #filename = "scanning_M5I2UQ_20251107_M1_140x_15y"
-    filename = "scanning_M5I2UQ_20251121_M1_SM2_131x_17y_406z"
+    #filename = "scanning_M5I2UQ_20251121_M1_SM2_131x_17y_406z"
     #imager.take_rpi_image(100, filename)
     #time.sleep(15)
 
-    impath = f"{c.PI_IMAGE_DIR}/{filename}.tif"
-    is_there_bacteria = is_good_for_ID(impath, dark_path, back_path)
-    print(is_there_bacteria)
+    impath = f"{c.PI_IMAGE_DIR}/IDI777/IDI777_20260225/IDI777_20260225_M1/IDI777_20260225_M1_unstained_SM3_40x_1"
+    result = check_focus(impath, 111.0, 14.0, dark_path, back_path)
+    if result:
+        print("WE PASSED")
+    else:
+        print("WE FAILED")
+
+    #is_there_bacteria = is_good_for_ID(impath, dark_path, back_path)
+    #print(is_there_bacteria)
     #for im in im_list:
         #impath = f"/home/microscope_auto/Images/{im}"
         #cell_counter_alt(impath, dark_path, back_path, 600)

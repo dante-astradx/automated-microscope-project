@@ -7,7 +7,7 @@ import csv
 
 microscope_id = c.MICROSCOPE_ID
 
-def generate_barcode_folders(barcode: str, smear_list):
+def generate_barcode_folders(barcode: str, smear_list, fovs):
 
     # Create folder structure for given barcode.
     # Returns path to the microscope-level directory.
@@ -28,15 +28,16 @@ def generate_barcode_folders(barcode: str, smear_list):
     microscope_dir = date_dir / f"{barcode}_{today}_{microscope_id}"
     microscope_dir.mkdir(parents=True, exist_ok=True)
 
-    # Step 4: Nine subfolders for SM1–SM3 and objectives 10,20,40
+    # Step 4: Subfolders for SM1–SM3 and objectives 10,20,40 and fovs (1, 2, 3, ect...)
     smear_ids = smear_list
     objectives = [10, 20, 40]
 
-    for smear_id in smear_ids:
+    for smear_id, fov_count in zip(smear_ids, fovs):
         for obj in objectives:
-            folder_name = f"{barcode}_{today}_{microscope_id}_unstained_{smear_id}_{obj}x_1"
-            subfolder = microscope_dir / folder_name
-            subfolder.mkdir(parents=True, exist_ok=True)
+            for fov in range(1, fov_count + 1):
+                folder_name = f"{barcode}_{today}_{microscope_id}_unstained_{smear_id}_{obj}x_{fov}"
+                subfolder = microscope_dir / folder_name
+                subfolder.mkdir(parents=True, exist_ok=True)
 
     csv_name, csv_path = create_quality_csv(barcode, microscope_dir)
 
@@ -146,4 +147,12 @@ if __name__ == '__main__':
     pass
 
     # --- Test Folder Generation ---
-    generate_barcode_folders("M5I2UQ", ["SM1", "SM2", "SM3"])
+    generate_barcode_folders("IDI777", ["SM1"], [1])
+    #generate_barcode_folders("M3ABCD", ["SM1", "SM2", "SM3"])
+    #generate_barcode_folders("M2ABCD", ["SM1", "SM2", "SM3"])
+    #generate_barcode_folders("RA0000", ["SM1", "SM2", "SM3"])
+    #generate_barcode_folders("M1ABCD", ["SM1", "SM2", "SM3"])
+    #generate_barcode_folders("M5BCDE", ["SM1", "SM2", "SM3"])
+    #generate_barcode_folders("M3BDCE", ["SM1", "SM2", "SM3"])
+
+

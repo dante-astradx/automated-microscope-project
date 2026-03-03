@@ -14,8 +14,12 @@ import analysis as a
 from datetime import datetime
 from datetime import date
 from microscope_log import log_output, log_to_file_only, update_status
+from mac_comms import send_background_image_to_mac, send_darkfield_image_to_mac, send_image_to_mac
+from json_handler import read_json
 import light_controller as lc
 import time
+import math
+from pathlib import Path
 
 class Motor:
     def __init__(self, filename, logger=print):
@@ -538,11 +542,28 @@ class Motor:
     def take_dark_background_image(self):
         self.start_imaging()
         time.sleep(15)
-
         self.take_background_image()
+
+        # send 10x to mac here
+        background_filename_10x, background_file_path_10x = self.filename.background_filename_generator(10)
+        self.logger(f"Sending {background_filename_10x} to Mac")
+        check = send_background_image_to_mac(background_filename_10x, background_file_path_10x)
+        if check:
+            self.logger(f"{background_filename_10x} succesfully sent to mac")
+        else:
+            self.logger(f"ERROR: {background_filename_10x} failed to send to mac. CHECK LOGS")
+
         self.stop_imaging()
         time.sleep(15)
         self.take_darkfield_image()
+
+        darkfield_filename_10x, darkfield_file_path_10x = self.filename.darkfield_filename_generator(10)
+        self.logger(f"Sending {darkfield_filename_10x} to Mac")
+        check = send_darkfield_image_to_mac(darkfield_filename_10x, darkfield_file_path_10x)
+        if check:
+            self.logger(f"{darkfield_filename_10x} succesfully sent to mac")
+        else:
+            self.logger(f"ERROR: {darkfield_filename_10x} failed to send to mac. CHECK LOGS")
 
     def complete_zstack(self, focus_scores):
         self.logger("Completing the Zstack...")
@@ -689,87 +710,225 @@ class Motor:
         self.logger("Data collection finished. All images have been taken and saved to Images folder")
         self.stop_imaging()
 
-    def collect_data_milestone5_xy(self, fov, smear_list, xy_coords):
+    def collect_data_milestone5_xy(self, smear_list, xy_coords):
         self.start_imaging()
 
         for i in range(len(smear_list)):
             smear_id = smear_list[i]
             self.set_smear_id(smear_id)
+            self.focus_view = 0
 
             self.first_scan_for_focus_preset([smear_id])
 
-            x_pos = xy_coords[i][0]
-            y_pos = xy_coords[i][1]
+            for j in range(len(xy_coords[i])):
+                x_pos = xy_coords[i][j][0]
+                y_pos = xy_coords[i][j][1]
 
-            self.check_stop()
-            self.focus_view = 1
+                self.logger(f"Collecting data at {x_pos}, {y_pos} in {smear_id}")
 
-            self.home_axis("X, Y")
-            self.move_x_axis(x_pos)
-            self.move_y_axis(y_pos)
-            self.check_stop()
+                self.check_stop()
+                self.focus_view += 1
 
-            # 10x imaging at x,y
-            self.collect_data_with_10x()
+                self.home_axis("X, Y")
+                self.move_x_axis(x_pos)
+                self.move_y_axis(y_pos)
+                self.check_stop()
 
-            # 20x, 40x imaging at x,y
-            self.collect_data_with_20x_40x(2)
-            self.collect_data_with_20x_40x(3)
+                # 10x imaging at x,y
+                self.collect_data_with_10x()
 
-            # 20x, 40x imaging at x+0.25, y+0.25
-            self.current_x += 0.25
-            self.current_y += 0.25
-            self.move_x_axis(self.current_x)
-            self.move_y_axis(self.current_y)
-            self.check_stop()
+                # 20x, 40x imaging at x,y
+                self.collect_data_with_20x_40x(2)
+                self.collect_data_with_20x_40x(3)
 
-            self.collect_data_with_20x_40x(2)
-            self.collect_data_with_20x_40x(3)
+                # 20x, 40x imaging at x+0.25, y+0.25
+                self.current_x += 0.25
+                self.current_y += 0.25
+                self.move_x_axis(self.current_x)
+                self.move_y_axis(self.current_y)
+                self.check_stop()
+
+                self.collect_data_with_20x_40x(2)
+                self.collect_data_with_20x_40x(3)
 
         self.logger("Data collection finished. All images have been taken and saved to Images folder")
         self.stop_imaging()
 
-
-    def collect_data_milestone2(self):
+    def collect_data_with_search_algorithm(self, smear_list, fov_list):
         self.start_imaging()
-        self.first_scan_for_focus_preset(["SM1", "SM2", "SM3"])
+        for i in range(len(smear_list)):
+            smear_id = smear_list[i]
+            self.set_smear_id(smear_id)
+            fov_target = fov_list[i]
 
-        target_x = 147
-        target_y = 15
+            self.first_scan_for_focus_preset([smear_id])
 
-        self.home_axis("X, Y")
-        self.set_smear_id("SM1")
-        self.focus_view = 1
+            center_x, center_y = self.get_smear_center(smear_id)
+            search_coords = self.generate_spiral(center_x, center_y)
 
-        self.check_stop()
-        self.move_x_axis(target_x)
-        self.move_y_axis(target_y)
+            self.focus_view = 0
+            for k in range(len(search_coords)):
+                if self.focus_view >= fov_target:
+                    self.logger(f"Reached target of {fov_target} FOVs for smear {smear_id}. Moving to next smear.")
+                    break
 
-        # 10x imaging at x,y
-        self.collect_data_with_10x()
+                x_pos = search_coords[k][0]
+                y_pos = search_coords[k][1]
+                self.logger(f"Searching for good fov at {x_pos},{y_pos} (Found: {self.focus_view}/{fov_target})")
 
-        # 20x, 40x imaging at x,y
-        self.collect_data_with_20x_40x(2)
-        self.collect_data_with_20x_40x(3)
+                self.home_axis("X, Y")
+                self.move_x_axis(x_pos)
+                self.move_y_axis(y_pos)
+                self.check_stop()
 
-        # 20x, 40x imaging at x+0.25, y+0.25
-        self.current_x += 0.25
-        self.current_y += 0.25
-        self.move_x_axis(self.current_x)
-        self.move_y_axis(self.current_y)
-        self.check_stop()
+                z_focus_10x, _, _ = self.scan_z_axis_for_focus()
+                self.move_z_axis(z_focus_10x)
 
-        self.collect_data_with_20x_40x(2)
-        self.collect_data_with_20x_40x(3)
+                scanning_filename = self.filename.scanning_filename_generator(self.current_x, self.current_y, z_focus_10x)
+                self.logger(f"Taking image! Filename: {scanning_filename}")
+                self.imager.take_rpi_image(100, scanning_filename)
+                time.sleep(15)
+                self.imager.update_latest_image_to_jpg(os.path.join(c.PI_IMAGE_DIR, f"{scanning_filename}.tif"))
+
+                json_path = send_image_to_mac(f"{scanning_filename}.tif")
+                if json_path:
+                    self.logger(f"Received json from mac: {os.path.basename(json_path)}")
+                    result, x_coord, y_coord = read_json(json_path)
+                    self.logger(f"Data found in json file: tile_5 = {result}, at {x_coord},{y_coord}")
+                    if result == "1":
+                        self.logger(f"Good fov detected at {x_pos},{y_pos}. Taking zstacks!")
+                        self.focus_view += 1
+
+                        #self.collect_data_with_10x()
+                        #self.collect_data_with_20x_40x(2)
+                        #self.collect_data_with_20x_40x(3)
+
+                        # code logic for implementation with the focus check QC
+                        stages = [(self.collect_data_with_10x, "10x", None), (self.collect_data_with_20x_40x, "20x", 2), (self.collect_data_with_20x_40x, "40x", 3)]
+                        for collect_func, name, arg in stages:
+                            passed_qc = False
+
+                            # Try up to 2 times
+                            for attempt in range(1, 3):
+                                self.logger(f"Running {name} collection (Attempt {attempt}/2)")
+
+                                # Run the collection (with or without argument)
+                                if arg is not None:
+                                    collect_func(arg)
+                                else:
+                                    collect_func()
+
+                                self.logger("Running QC check on zstack")
+                                if self.qc_check_focus():
+                                    self.logger(f"{name} QC Passed.")
+                                    passed_qc = True
+                                    break # Success! Exit the retry loop and go to next stage
+                                else:
+                                    self.logger(f"{name} QC Failed on attempt {attempt}.")
+                                    self.handle_failed_qc()
+                                    if attempt == 1:
+                                        self.logger(f"Retrying {name} collection...")
+                                    else:
+                                        self.logger(f"{name} failed twice. Moving to next objective/step.")
+                        self.move_carousel("1")
+                    else:
+                        self.logger(f"Fov rejected at {x_pos},{y_pos}. Moving to next position")
+                else:
+                    self.logger(f"No json file received. CHECK LOGS FOR ERROR")
+
+            else:
+                # EXHAUSTION CONDITION: This runs ONLY if the loop finishes without hitting the 'break' (meaning focus_view < fov_target)
+                self.logger(f"ATTENTION: Exhausted all {len(search_coords)} positions "
+                            f"but only found {self.focus_view}/{fov_target} good FOVs "
+                            f"for smear {smear_id}.")
 
         self.logger("Data collection finished. All images have been taken and saved to Images folder")
         self.stop_imaging()
+
+    def handle_failed_qc(self):
+        zstack_folder_path = self.filename.data_path_generator(self.focus_view, self.obj)
+        self.logger(f"Zstack failed QC at path: {zstack_folder_path}")
+
+        new_folder_path = self.filename.failed_qc_path_generator(self.focus_view, self.obj)
+        self.logger(f"Creating new folder path to store failed zstack")
+        self.logger(f"Changing the folder name to: {os.path.basename(new_folder_path)} ")
+        os.rename(zstack_folder_path, new_folder_path)
+
+        self.logger("Recreating the original folder path: {zstack_folder_path}")
+        Path(zstack_folder_path).mkdir(parents=True, exist_ok=True)
+
+    def qc_check_focus(self):
+        zstack_folder_path = self.filename.data_path_generator(self.focus_view, self.obj)
+        self.logger(f"Running QC check on path: {zstack_folder_path}")
+
+        background_filename, background_file_path = self.filename.background_filename_generator(self.obj)
+        darkfield_filename, darkfield_file_path = self.filename.darkfield_filename_generator(self.obj)
+
+        dark_path = f"{darkfield_file_path}/{darkfield_filename}.tif"
+        back_path = f"{background_file_path}/{background_filename}.tif"
+
+        result = a.check_focus(zstack_folder_path, self.current_x, self.current_y, dark_path, back_path)
+        return result
+
+    def get_smear_center(self, smear_id):
+        y_center = c.SLIDE_1_CENTER_Y
+        if smear_id == "SM1":
+            x_center = c.SLIDE_1_SM1_CENTER_X
+        elif smear_id == "SM2":
+            x_center = c.SLIDE_1_SM2_CENTER_X
+        elif smear_id == "SM3":
+            x_center = c.SLIDE_1_SM3_CENTER_X
+        else:
+            self.logger(f"{smear_id} is not a valid smear ID")
+            return None
+
+        return x_center, y_center
+
+    def generate_spiral(self, start_x, start_y, num_points=20, spacing=0.5):
+        points = [[float(start_x), float(start_y)]]
+        if num_points <= 1:
+            return points
+
+        curr_x, curr_y = float(start_x), float(start_y)
+
+        # Directions: Down, Right, Up, Left
+        # Based on your example: (100, 10) -> (100, 9.5) is Down (y - spacing)
+        directions = [(0, -1), (1, 0), (0, 1), (-1, 0)]
+
+        step_size = 1
+        dir_idx = 0
+
+        while len(points) < num_points:
+            # We move in the current direction 'step_size' times
+            # But we must check the point count after every single step
+            for _ in range(2): # In a square spiral, you increase step size every 2 directions
+                for _ in range(step_size):
+                    if len(points) >= num_points:
+                        return points
+
+                    dx, dy = directions[dir_idx]
+                    curr_x += dx * spacing
+                    curr_y += dy * spacing
+                    points.append([round(curr_x, 4), round(curr_y, 4)])
+
+                # Change direction
+                dir_idx = (dir_idx + 1) % 4
+
+            step_size += 1
+        return points
+
+    ### Original version where only a single 10x image is taken 
+    #def collect_data_with_10x(self):
+        #self.move_carousel("1")
+        #z_focus_10x, _, _ = self.scan_z_axis_for_focus()
+        #self.move_z_axis(z_focus_10x)
+        #self.capture_image(z_focus_10x)
+        #self.check_stop()
 
     def collect_data_with_10x(self):
         self.move_carousel("1")
-        z_focus_10x, _, _ = self.scan_z_axis_for_focus()
-        self.move_z_axis(z_focus_10x)
-        self.capture_image(z_focus_10x)
+        z_focus_10x, _, _ = self.scan_z_axis_for_focus(True)
+        self.filename.image_cleanup(self.focus_view, self.obj, z_focus_10x, self.current_x, self.current_y, 1, 1)
         self.check_stop()
 
     def collect_data_with_20x_40x(self, obj = int):
@@ -777,52 +936,6 @@ class Motor:
         z_focus, _, focus_scores = self.scan_z_axis_for_focus(True)
         self.complete_zstack(focus_scores)
         self.check_stop()
-
-    def go_to_gaussian_position(self, xmin):
-        # Mean vector (2D)
-        x0 = xmin + 5 # xmin depends on smear (SM1 or SM2 or SM3)
-        y0 = 14.5
-        mean = [x0, y0]
-
-        # Covariance matrix of the Gaussian (2x2)
-        cov = [[4, 0], [0, 4]]  # Diagonal covariance means no correlation
-
-        # Number of samples to draw
-        num_samples = 1
-
-        # Draw samples
-        samples = np.random.multivariate_normal(mean, cov, num_samples)
-
-        random_x_pos = round(samples[0][0])
-        random_y_pos = round(samples[0][1])
-
-        self.logger(f"Moving to random position {random_x_pos}, {random_y_pos} to check for bacteria")
-        self.move_x_axis(random_x_pos)
-        self.move_y_axis(random_y_pos)
-
-        return random_x_pos, random_y_pos
-
-    def search_coord(self, coord, smear_id):
-    # Function that takes coordinate, converts to right x based on smear_no
-    # and creates a list of coordinates exactly 1,0, or -1 units away from top search coord
-    # and chooses one of those at random, to give algorithm some flexibility to search
-
-        x, y = coord
-        if smear_id == "SM1":
-            x += 141
-        elif smear_id== "SM2":
-            x += 123
-        else:
-            x += 107
-
-    # Create list of coordinates exactly 1 or 0 units away from center
-        coord_list = [(x + dx, y + dy) for dx in (-1, 0, 1) for dy in (-1, 0, 1)]
-        random_coord = random.choice(coord_list)
-
-        self.move_x_axis(random_coord[0])
-        self.move_y_axis(random_coord[1])
-
-        return random_coord
 
     def search_for_bacteria(self, fov, smear_id):
         self.move_carousel("1")
@@ -836,6 +949,8 @@ class Motor:
         back_path = f"{background_file_path}/{background_filename}.tif"
 
         top_search_coords = [(4, 13), (2, 17), (7, 12), (3, 16), (6, 17), (0, 13), (4, 21), (10, 19)]
+
+        self.first_scan_for_focus_preset([smear_id])
 
         for coord in top_search_coords:
             self.check_stop()
@@ -996,10 +1111,11 @@ if __name__ == "__main__":
     #motor.move_carousel("2")
 
     # --- Basic Motor Control Test ---
-    motor.home_axis("Z")
-    #motor.move_x_axis(112)
-    #motor.move_y_axis(14)
+    #motor.home_axis("X, Y")
+    #motor.move_x_axis(114)
+    #motor.move_y_axis(15)
     #motor.move_z_axis(200)
 
     #smear_list = ["SM1"]
     #motor.collect_data_milestone5(1, smear_list)
+    #motor.take_dark_background_image()

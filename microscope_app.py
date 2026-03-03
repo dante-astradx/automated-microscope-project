@@ -61,6 +61,7 @@ def start():
 
     folder_name = request.form["folder_name"]
     selected_smears = request.form.getlist("smears")
+    imaging_mode = request.form.get("imaging_mode")
 
     if not folder_name:
         flash("Barcode is required to start!")
@@ -68,6 +69,10 @@ def start():
 
     if len(selected_smears) == 0:
         flash("You must select at least one smear to image!")
+        return redirect(url_for("index"))
+
+    if not imaging_mode:
+        flash("You must select an imaging mode!")
         return redirect(url_for("index"))
 
     if not check_pre_imaging():
@@ -85,27 +90,61 @@ def start():
         flash("Barcode is not in correct format")
         return redirect(url_for("index"))
 
-    generate_barcode_folders(folder_name, selected_smears)
-
     file = FileTransfer5(logger=log_output)
     file.set_barcode(folder_name)
 
     motor_instance = Motor(filename=file, logger=log_output)
 
-    smear_ids, coords = csv_lookup(folder_name)
     #log_milestone_run(folder_name, "10x scan")
     log_milestone_run(folder_name, "10, 20, 40x zstack")
 
+    if imaging_mode == "XY_Coordinate":
+        smear_ids, coords = csv_lookup(folder_name, selected_smears)
+
+        fovs = []
+        for i in range(len(coords)):
+            number_of_fovs = len(coords[i])
+            fovs.append(number_of_fovs)
+
+        generate_barcode_folders(folder_name, selected_smears, fovs)
+        def task_fn():
+            update_status(f"Imaging barcode {folder_name} & imaging coordinates: {coords}")
+            motor_instance.collect_data_milestone5_xy(smear_ids, coords)
+
+    elif imaging_mode == "Search_Algorithm":
+        desired_fov = 5
+        fovs = []
+        for i in range(len(selected_smears)):
+            fovs.append(desired_fov)
+
+        generate_barcode_folders(folder_name, selected_smears, fovs)
+        def task_fn():
+            update_status(f"Imaging barcode {folder_name}. Searching for {desired_fov} FOV's at {selected_smears}")
+            motor_instance.collect_data_with_search_algorithm(selected_smears, fovs)
+            #motor_instance.collect_data_milestone5(1, selected_smears)
+
     def data_task():
+        task_fn()
+        update_status("Data collection complete")
+
+    threading.Thread(target=data_task, daemon=True).start()
+
+    return redirect(url_for("index"))
+
+    #smear_ids, coords = csv_lookup(folder_name)
+    #log_milestone_run(folder_name, "10x scan")
+    #log_milestone_run(folder_name, "10, 20, 40x zstack")
+
+    #def data_task():
         #motor_instance.smear_analysis_test(selected_smears)
         #motor_instance.collect_data_milestone2()
         #motor_instance.collect_data_milestone5(1, selected_smears)
-        motor_instance.collect_data_milestone5_xy(1, smear_ids, coords)
-        update_status("Data collection complete")
+        #motor_instance.collect_data_milestone5_xy(1, smear_ids, coords)
+        #update_status("Data collection complete")
 
-    threading.Thread(target=data_task).start()
+    #threading.Thread(target=data_task).start()
 
-    return redirect(url_for("index"))
+    #return redirect(url_for("index"))
 
 @app.route("/check_light", methods=["POST"])
 def check_light():
