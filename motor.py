@@ -1111,9 +1111,9 @@ if __name__ == "__main__":
     #motor.move_carousel("2")
 
     # --- Basic Motor Control Test ---
-    #motor.home_axis("X, Y")
-    #motor.move_x_axis(114)
-    #motor.move_y_axis(15)
+    motor.home_axis("X, Y")
+    motor.move_x_axis(137)
+    motor.move_y_axis(14)
     #motor.move_z_axis(200)
 
     #smear_list = ["SM1"]

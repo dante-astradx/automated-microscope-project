@@ -2,6 +2,7 @@ archive.py
 config.py
 microscope_log.txt.*
 microscope_service_account.json
+start_microscope.sh
 *.py~
 *.sh~
 endstop_test.py
