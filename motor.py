@@ -797,6 +797,7 @@ class Motor:
                     self.logger(f"Data found in json file: tile_5 = {result}, at {x_coord},{y_coord}")
                     if result == "1":
                         self.logger(f"Good fov detected at {x_pos},{y_pos}. Taking zstacks!")
+                        self.filename.append_csv(self.current_x, self.current_y, self.current_z, True)
                         self.focus_view += 1
 
                         #self.collect_data_with_10x()
@@ -833,6 +834,7 @@ class Motor:
                         self.move_carousel("1")
                     else:
                         self.logger(f"Fov rejected at {x_pos},{y_pos}. Moving to next position")
+                        self.filename.append_csv(self.current_x, self.current_y, self.current_z, False)
                 else:
                     self.logger(f"No json file received. CHECK LOGS FOR ERROR")
 

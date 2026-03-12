@@ -32,12 +32,6 @@ class FileTransfer5:
         self.laptop_upload_dir = None
 
         self.pi_image_dir = c.PI_IMAGE_DIR
-        #self.rclone_remote_zstack = c.RCLONE_REMOTE_ZSTACK
-        #self.rclone_remote_no_slide = c.RCLONE_REMOTE_NO_SLIDE
-        #self.rclone_remote_no_light = c.RCLONE_REMOTE_NO_LIGHT
-        #self.rsync_remote = c.RSYNC_REMOTE
-        #self.rsync_remote_no_slide = c.RSYNC_REMOTE_NO_SLIDE
-        #self.rsync_remote_no_light = c.RSYNC_REMOTE_NO_LIGHT
 
         self.ssh = None
         self.sftp = None
@@ -163,17 +157,17 @@ class FileTransfer5:
 
     def get_rsync_path(self, milestone_prefix):
         if milestone_prefix == "M1":
-            rsync_path = "/Users/astradx/ArnaoutLab Dropbox/Dante Muzila/AstraDx_data/images_raw/CARB-X/Milestone_1/Data_Collection_7"
+            rsync_path = "/Volumes/T9/Milestone_1/Data_Collection_7"
         elif milestone_prefix == "M2":
-            rsync_path = "/Users/astradx/ArnaoutLab Dropbox/Dante Muzila/AstraDx_data/images_raw/CARB-X/Milestone_2/Data_Collection_5"
+            rsync_path = "/Volumes/T9/Milestone_2/Data_Collection_6"
         elif milestone_prefix == "M3":
-            rsync_path = "/Users/astradx/ArnaoutLab Dropbox/Dante Muzila/AstraDx_data/images_raw/CARB-X/Milestone_3/Data_Collection_6"
+            rsync_path = "/Volumes/T9/Milestone_3/Data_Collection_7"
         elif milestone_prefix == "M7":
-            rsync_path = "/Users/astradx/ArnaoutLab Dropbox/Dante Muzila/AstraDx_data/images_raw/CARB-X/Milestone_7/Data_Collection_2"
+            rsync_path = "/Volumes/T9/Milestone_7/Data_Collection_2"
         elif milestone_prefix == "ID":
-            rsync_path = "/Users/astradx/ArnaoutLab Dropbox/Dante Muzila/AstraDx_data/images_raw/CARB-X/ID/Data_Collection_1"
+            rsync_path = "/Volumes/T9/ID/Data_Collection_2"
         else: # Milestone 5 and RA condition
-            rsync_path = "/Users/astradx/ArnaoutLab Dropbox/Dante Muzila/AstraDx_data/images_raw/CARB-X/Milestone_5/Data_Collection_8"
+            rsync_path = "/Volumes/T9/Milestone_5/Data_Collection_8"
 
         if milestone_prefix not in self.milestone_list:
             self.milestone_list.append(milestone_prefix)
@@ -220,12 +214,12 @@ class FileTransfer5:
             for milestone in self.milestone_list:
                 print(f"Saving background images for Milestone: {milestone}")
                 if milestone == "RA":
-                    rsync_no_slide = "/Users/astradx/ArnaoutLab Dropbox/Dante Muzila/AstraDx_data/images_raw/CARB-X/Milestone_5/no-slide"
+                    rsync_no_slide = "/Volumes/T9/Milestone_5/no-slide"
                 elif milestone == "ID":
-                    rsync_no_slide = "/Users/astradx/ArnaoutLab Dropbox/Dante Muzila/AstraDx_data/images_raw/CARB-X/ID/no-slide"
+                    rsync_no_slide = "/Volumes/T9/ID/no-slide"
                 else:
                     milestone_number = milestone[1]
-                    rsync_no_slide = f"/Users/astradx/ArnaoutLab Dropbox/Dante Muzila/AstraDx_data/images_raw/CARB-X/Milestone_{milestone_number}/no-slide"
+                    rsync_no_slide = f"/Volumes/T9/Milestone_{milestone_number}/no-slide"
 
                 print(f"Saving background images to path: {rsync_no_slide}")
 
@@ -245,12 +239,12 @@ class FileTransfer5:
             for milestone in self.milestone_list:
                 print(f"Saving darkfield images for Milestone: {milestone}")
                 if milestone == "RA":
-                    rsync_no_light = "/Users/astradx/ArnaoutLab Dropbox/Dante Muzila/AstraDx_data/images_raw/CARB-X/Milestone_5/no-light"
+                    rsync_no_light = "/Volumes/T9/Milestone_5/no-light"
                 elif milestone == "ID":
-                    rsync_no_light = "/Users/astradx/ArnaoutLab Dropbox/Dante Muzila/AstraDx_data/images_raw/CARB-X/ID/no-light"
+                    rsync_no_light = "/Volumes/T9/ID/no-light"
                 else:
                     milestone_number = milestone[1]
-                    rsync_no_light = f"/Users/astradx/ArnaoutLab Dropbox/Dante Muzila/AstraDx_data/images_raw/CARB-X/Milestone_{milestone_number}/no-light"
+                    rsync_no_light = f"/Volumes/T9/Milestone_{milestone_number}/no-light"
 
                 print(f"Saving darkfield images to path: {rsync_no_light}")
 
@@ -342,5 +336,5 @@ if __name__ == "__main__":
     #rsync_remote = c.RSYNC_REMOTE
     #file.upload_to_laptop_rsync("M5RCT6", rsync_remote, True)
 
-    path = "/Users/astradx/ArnaoutLab Dropbox/Dante Muzila/AstraDx_data/images_raw/CARB-X/ID/no-light"
-    file.upload_to_laptop_rsync("no-light_20260303_M1", path, True)
+    path = "/Volumes/T9"
+    file.upload_to_laptop_rsync("latest_image.jpg", path, False)
