@@ -59,92 +59,96 @@ def stream():
 def start():
     global motor_instance, current_step
 
-    folder_name = request.form["folder_name"]
-    selected_smears = request.form.getlist("smears")
+    num_slides = request.form.get("num_slides")
     imaging_mode = request.form.get("imaging_mode")
 
-    if not folder_name:
-        flash("Barcode is required to start!")
-        return redirect(url_for("index"))
+    # Gather data for all slides into a list of dictionaries
+    slides_to_run = []
 
-    if len(selected_smears) == 0:
-        flash("You must select at least one smear to image!")
-        return redirect(url_for("index"))
+    # Slide 1 (Always expected)
+    s1_barcode = request.form.get("barcode_1")
+    s1_smears = request.form.getlist("smears_1")
+    if s1_barcode:
+        slides_to_run.append({
+            "barcode": s1_barcode,
+            "smears": s1_smears,
+            "offset": 0 # Top slide center
+        })
+
+    # Slide 2 (Only if selected in dropdown)
+    if num_slides == "2":
+        s2_barcode = request.form.get("barcode_2")
+        s2_smears = request.form.getlist("smears_2")
+        if s2_barcode:
+            slides_to_run.append({
+                "barcode": s2_barcode,
+                "smears": s2_smears,
+                "offset": c.SLIDE_HEIGHT_MM # 25mm offset from config
+            })
+
+    #Validate barcode foramts
+    for slide in slides_to_run:
+        if len(slide["smears"]) == 0:
+            flash(f"You must select at least one smear to image {slide['barcode']}!")
+            return redirect(url_for("index"))
 
     if not imaging_mode:
         flash("You must select an imaging mode!")
         return redirect(url_for("index"))
 
     if not check_pre_imaging():
-        flash("Background and darkfield images must be take first. Select Pre-Imaging Button")
+        flash("Background and darkfield images must be taken first. Select Pre-Imaging Button")
         return redirect(url_for("index"))
 
-    if check_barcode(folder_name):
-        try:
-            add_entry(folder_name)
-            update_status("Folder name successfully added to log")
-        except Exception as e:
-            update_status(f"Error saving to log: {str(e)}")
-            return redirect(url_for("index"))
-    else:
-        flash("Barcode is not in correct format")
-        return redirect(url_for("index"))
+    for slides in slides_to_run:
+        flash(f"Imaging {slides['barcode']} \n")
 
-    file = FileTransfer5(logger=log_output)
-    file.set_barcode(folder_name)
-
-    motor_instance = Motor(filename=file, logger=log_output)
-
-    #log_milestone_run(folder_name, "10x scan")
-    log_milestone_run(folder_name, "10, 20, 40x zstack")
-
-    if imaging_mode == "XY_Coordinate":
-        smear_ids, coords = csv_lookup(folder_name, selected_smears)
-
-        fovs = []
-        for i in range(len(coords)):
-            number_of_fovs = len(coords[i])
-            fovs.append(number_of_fovs)
-
-        generate_barcode_folders(folder_name, selected_smears, fovs)
-        def task_fn():
-            update_status(f"Imaging barcode {folder_name} & imaging coordinates: {coords}")
-            motor_instance.collect_data_milestone5_xy(smear_ids, coords)
-
-    elif imaging_mode == "Search_Algorithm":
-        desired_fov = 5
-        fovs = []
-        for i in range(len(selected_smears)):
-            fovs.append(desired_fov)
-
-        generate_barcode_folders(folder_name, selected_smears, fovs)
-        def task_fn():
-            update_status(f"Imaging barcode {folder_name}. Searching for {desired_fov} FOV's at {selected_smears}")
-            motor_instance.collect_data_with_search_algorithm(selected_smears, fovs)
-            #motor_instance.collect_data_milestone5(1, selected_smears)
-
+    # define actual imaging data task
     def data_task():
-        task_fn()
-        update_status("Data collection complete")
+        for slide in slides_to_run:
+            # Check for stop request between slides
+            #if motor_instance and motor_instance.stop_requested:
+            #    break
+
+            #update_status(f"Starting imaging for Barcode: {slide['barcode']}")
+            # Add to folder log
+            try:
+                add_entry(slide["barcode"])
+            except Exception as e:
+                log_output(f"Error adding to log: {str(e)}")
+
+            # Initialize file transfer for this specific barcode
+            file = FileTransfer5(logger=log_output)
+            file.set_barcode(slide["barcode"])
+
+            # Initialize motor with the specific Y-offset for this slide
+            motor_instance = Motor(filename=file, logger=log_output)
+            motor_instance.slide_y_offset = slide["offset"] # Passed to motor for coordinate math
+
+            log_milestone_run(slide["barcode"], "10, 20, 40x zstack")
+
+            if imaging_mode == "XY_Coordinate":
+                smear_ids, coords = csv_lookup(slide["barcode"], slide["smears"])
+
+                fovs = [len(c) for c in coords]
+                generate_barcode_folders(slide["barcode"], slide["smears"], fovs)
+
+                update_status(f"Imaging barcode {slide['barcode']} & imaging coordinates: {coords}")
+                motor_instance.collect_data_milestone5_xy(smear_ids, coords)
+
+            elif imaging_mode == "Search_Algorithm":
+                desired_fov = 5
+                fovs = [desired_fov for _ in slide["smears"]]
+
+                generate_barcode_folders(slide["barcode"], slide["smears"], fovs)
+
+                update_status(f"Imaging barcode {slide['barcode']}. Searching for {desired_fov} FOV's at {slide['smears']}")
+                motor_instance.collect_data_with_search_algorithm(slide["smears"], fovs)
+
+        #update_status("Multi-slide data collection complete")
 
     threading.Thread(target=data_task, daemon=True).start()
-
     return redirect(url_for("index"))
-
-    #smear_ids, coords = csv_lookup(folder_name)
-    #log_milestone_run(folder_name, "10x scan")
-    #log_milestone_run(folder_name, "10, 20, 40x zstack")
-
-    #def data_task():
-        #motor_instance.smear_analysis_test(selected_smears)
-        #motor_instance.collect_data_milestone2()
-        #motor_instance.collect_data_milestone5(1, selected_smears)
-        #motor_instance.collect_data_milestone5_xy(1, smear_ids, coords)
-        #update_status("Data collection complete")
-
-    #threading.Thread(target=data_task).start()
-
-    #return redirect(url_for("index"))
 
 @app.route("/check_light", methods=["POST"])
 def check_light():

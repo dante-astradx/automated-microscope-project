@@ -336,5 +336,5 @@ if __name__ == "__main__":
     #rsync_remote = c.RSYNC_REMOTE
     #file.upload_to_laptop_rsync("M5RCT6", rsync_remote, True)
 
-    path = "/Volumes/T9"
-    file.upload_to_laptop_rsync("latest_image.jpg", path, False)
+    path = "/Volumes/T9/ID/Data_Collection_2"
+    file.upload_to_laptop_rsync("IDI222", path, True)

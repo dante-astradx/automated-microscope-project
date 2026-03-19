@@ -79,8 +79,9 @@ class Motor:
         self.sm3_x_min = c.SM3_X_MIN
         self.sm3_x_max = c.SM3_X_MAX
 
-        self.y_min = c.Y_MIN
-        self.y_max = c.Y_MAX
+        #self.y_min = c.Y_MIN
+        #self.y_max = c.Y_MAX
+        self.y_range_allowed = c.Y_RANGE_ALLOWED
 
         self.smear_x_min = None
         self.smear_x_max = None
@@ -118,6 +119,9 @@ class Motor:
 
         # Stop Requested
         self.stop_requested = False
+
+        # Two Slide offset - Initialize with 0 by default i.e. Slide 1, will be 25 for Slide 2
+        self.slide_y_offset = 0
 
     def stop(self):
         # Signal the motor to stop gracefully
@@ -168,8 +172,15 @@ class Motor:
         return printer_relative_x_units * self.rot_distance_x
 
     # Function to calculate Y-axis motor position for a give location in MM from home
+    #def calculate_motor_position_y(self, microscope_y_units):
+        #printer_relative_y_units = microscope_y_units - self.y_offset
+        #return printer_relative_y_units * self.rot_distance_y
+
+    # Function to calculate Y-axis motor position for a give location in MM from home - Two Slide approach
     def calculate_motor_position_y(self, microscope_y_units):
-        printer_relative_y_units = microscope_y_units - self.y_offset
+        # Apply the slide offset (0 for Slide 1, 25 for Slide 2)
+        adjusted_y = microscope_y_units + self.slide_y_offset
+        printer_relative_y_units = adjusted_y - self.y_offset
         return printer_relative_y_units * self.rot_distance_y
 
     # Function to calculate Z-axis motor position for a give location in uM (micron) from home
@@ -260,9 +271,18 @@ class Motor:
         self.current_x = x_pos
 
     # Function to move y-axis
+    #def move_y_axis(self, y_pos):
+        #self.logger(f"Moving y-axis to position {y_pos}mm")
+        #target_y_mm = self.calculate_motor_position_y(y_pos)
+        #self.move_command(self.target_axis_y, target_y_mm)
+        #self.current_y = y_pos
+
+    # Function to move y-axis
     def move_y_axis(self, y_pos):
-        self.logger(f"Moving y-axis to position {y_pos}mm")
         target_y_mm = self.calculate_motor_position_y(y_pos)
+
+        y_pos = y_pos + self.slide_y_offset
+        self.logger(f"Moving y-axis to position {y_pos}mm")
         self.move_command(self.target_axis_y, target_y_mm)
         self.current_y = y_pos
 
@@ -627,7 +647,11 @@ class Motor:
 
     def first_scan_for_focus_preset(self, smear_list):
         self.home_axis("X, Y")
-        self.move_y_axis(14)
+
+        current_center_y = c.SLIDE_1_CENTER_Y
+        self.move_y_axis(current_center_y)
+        #self.move_y_axis(14)
+
         self.move_carousel("1")
 
         for smear_id in smear_list:
@@ -724,7 +748,7 @@ class Motor:
                 x_pos = xy_coords[i][j][0]
                 y_pos = xy_coords[i][j][1]
 
-                self.logger(f"Collecting data at {x_pos}, {y_pos} in {smear_id}")
+                self.logger(f"Collecting data at {x_pos}, {y_pos + self.slide_y_offset} in {smear_id}")
 
                 self.check_stop()
                 self.focus_view += 1
@@ -767,6 +791,7 @@ class Motor:
             search_coords = self.generate_spiral(center_x, center_y)
 
             self.focus_view = 0
+            total_positions = len(search_coords)
             for k in range(len(search_coords)):
                 if self.focus_view >= fov_target:
                     self.logger(f"Reached target of {fov_target} FOVs for smear {smear_id}. Moving to next smear.")
@@ -774,9 +799,9 @@ class Motor:
 
                 x_pos = search_coords[k][0]
                 y_pos = search_coords[k][1]
-                self.logger(f"Searching for good fov at {x_pos},{y_pos} (Found: {self.focus_view}/{fov_target})")
+                self.logger(f"Position {k+1}/{total_positions}: Searching for good fov at {x_pos},{y_pos + self.slide_y_offset} (Found: {self.focus_view}/{fov_target})")
 
-                self.home_axis("X, Y")
+                #self.home_axis("X, Y")
                 self.move_x_axis(x_pos)
                 self.move_y_axis(y_pos)
                 self.check_stop()
@@ -796,7 +821,7 @@ class Motor:
                     result, x_coord, y_coord = read_json(json_path)
                     self.logger(f"Data found in json file: tile_5 = {result}, at {x_coord},{y_coord}")
                     if result == "1":
-                        self.logger(f"Good fov detected at {x_pos},{y_pos}. Taking zstacks!")
+                        self.logger(f"Good fov detected at {x_pos},{y_coord}. Taking zstacks!")
                         self.filename.append_csv(self.current_x, self.current_y, self.current_z, True)
                         self.focus_view += 1
 
@@ -833,7 +858,7 @@ class Motor:
                                         self.logger(f"{name} failed twice. Moving to next objective/step.")
                         self.move_carousel("1")
                     else:
-                        self.logger(f"Fov rejected at {x_pos},{y_pos}. Moving to next position")
+                        self.logger(f"Fov rejected at {x_pos},{y_coord}. Moving to next position")
                         self.filename.append_csv(self.current_x, self.current_y, self.current_z, False)
                 else:
                     self.logger(f"No json file received. CHECK LOGS FOR ERROR")
@@ -886,7 +911,7 @@ class Motor:
 
         return x_center, y_center
 
-    def generate_spiral(self, start_x, start_y, num_points=20, spacing=0.5):
+    def generate_spiral(self, start_x, start_y, num_points=20, spacing=1.0):
         points = [[float(start_x), float(start_y)]]
         if num_points <= 1:
             return points
@@ -1113,11 +1138,8 @@ if __name__ == "__main__":
     #motor.move_carousel("2")
 
     # --- Basic Motor Control Test ---
-    motor.home_axis("X, Y")
-    motor.move_x_axis(137)
-    motor.move_y_axis(14)
+    #motor.home_axis("X, Y")
+    #motor.move_x_axis(113)
+    #motor.move_y_axis(13)
     #motor.move_z_axis(200)
 
-    #smear_list = ["SM1"]
-    #motor.collect_data_milestone5(1, smear_list)
-    #motor.take_dark_background_image()

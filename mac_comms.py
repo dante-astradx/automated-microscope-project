@@ -28,7 +28,7 @@ def send_image_to_mac(filename):
         result = subprocess.run(rsync_send, check=True)
         # If rsync succeeded, delete the local .tif file
         if result.returncode == 0:
-            #os.remove(image_path)
+            os.remove(image_path)
             print(f"Success. {filename} moved to Mac and deleted from Raspi.")
     except subprocess.CalledProcessError as e:
         print(f"Failed to send image: {e}")

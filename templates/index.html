@@ -85,6 +85,20 @@
                 img.src = `/latest_image?${new Date().getTime()}`; // cache-busting
             }, 15000);
         }
+        function toggleSlideInputs() {
+            const numSlides = document.getElementById('num_slides').value;
+            const slide2Section = document.getElementById('slide_2_section');
+            const barcode2Input = document.getElementById('barcode_2');
+
+            if (numSlides === "2") {
+                slide2Section.style.display = 'block';
+                barcode2Input.required = true;
+            } else {
+                slide2Section.style.display = 'none';
+                barcode2Input.required = false;
+                barcode2Input.value = ""; // Clear value if user switches back to 1 slide
+            }
+        }
     </script>
 </head>
 
@@ -103,28 +117,50 @@
 
     <!-- Folder Name Input and Start -->
     <form action="{{ url_for('start') }}" method="post">
-        <label for="folder_name">Enter Folder Name:</label>
-        <input type="text" id="folder_name" name="folder_name" required>
+        <label for="num_slides"><b>Number of Slides to Image:</b></label>
+        <select id="num_slides" name="num_slides" onchange="toggleSlideInputs()" style="padding: 5px; border-radius: 4px;">
+            <option value="1">1 Slide</option>
+            <option value="2">2 Slides</option>
+        </select>
 
         <br><br>
-        <label>Select Smear(s):</label><br>
-        <input type="checkbox" id="sm1" name="smears" value="SM1">
-        <label for="sm1">Smear 1</label><br>
 
-        <input type="checkbox" id="sm2" name="smears" value="SM2">
-        <label for="sm2">Smear 2</label><br>
+        <div id="slide_1_section" style="padding: 10px; border: 1px solid #eee; border-radius: 8px;">
+            <h3>Slide 1 (Top)</h3>
+            <label for="barcode_1">Barcode:</label>
+            <input type="text" id="barcode_1" name="barcode_1" required>
 
-        <input type="checkbox" id="sm3" name="smears" value="SM3">
-        <label for="sm3">Smear 3</label><br><br>
+            <br><br>
+            <label>Select Smear(s):</label><br>
+            <input type="checkbox" name="smears_1" value="SM1"> Smear 1
+            <input type="checkbox" name="smears_1" value="SM2"> Smear 2
+            <input type="checkbox" name="smears_1" value="SM3"> Smear 3
+        </div>
 
-        <label>Select Imaging Mode:</label><br>
-        <input type="radio" id="xy_coordinate" name="imaging_mode" value="XY_Coordinate" required>
-        <label for="xy_coordinate">X-Y Coordinate</label><br>
+        <div id="slide_2_section" style="display: none; margin-top: 15px; padding: 10px; border: 1px solid #eee; border-radius: 8px; background-color: #fafafa;">
+            <h3>Slide 2 (Bottom)</h3>
+            <label for="barcode_2">Barcode:</label>
+            <input type="text" id="barcode_2" name="barcode_2">
 
-        <input type="radio" id="search_algorithm" name="imaging_mode" value="Search_Algorithm">
-        <label for="search_algorithm">Search Algorithm</label><br>
+            <br><br>
+            <label>Select Smear(s):</label><br>
+            <input type="checkbox" name="smears_2" value="SM1"> Smear 1
+            <input type="checkbox" name="smears_2" value="SM2"> Smear 2
+            <input type="checkbox" name="smears_2" value="SM3"> Smear 3
+        </div>
 
-        <button type="submit" class="button start">Start</button>
+        <br>
+        <div style="padding: 10px; background-color: #f0f7ff; border-radius: 8px;">
+            <label><b>Global Imaging Mode:</b></label><br>
+            <input type="radio" id="xy_coordinate" name="imaging_mode" value="XY_Coordinate" required>
+            <label for="xy_coordinate">X-Y Coordinate</label><br>
+
+            <input type="radio" id="search_algorithm" name="imaging_mode" value="Search_Algorithm">
+            <label for="search_algorithm">Search Algorithm</label><br>
+        </div>
+
+        <br>
+        <button type="submit" class="button start">Start Multi-Slide Run</button>
     </form>
 
     <!-- Toggle Light Button -->
