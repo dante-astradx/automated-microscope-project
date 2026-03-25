@@ -17,6 +17,8 @@ def send_image_to_mac(filename):
     # Define file paths
     image_path = os.path.join(RASPI_SRC_DIR, filename)
     json_filename = filename.rsplit('.', 1)[0] + ".json"
+    json_image_folder_path = os.path.join(RASPI_SRC_DIR, json_filename)
+
     remote_json_path = f"{MAC_USER}@{MAC_IP}:{os.path.join(MAC_JSON_DIR, json_filename)}"
     local_json_path = os.path.join(RASPI_JSON_DEST, json_filename)
 
@@ -29,6 +31,7 @@ def send_image_to_mac(filename):
         # If rsync succeeded, delete the local .tif file
         if result.returncode == 0:
             os.remove(image_path)
+            os.remove(json_image_folder_path)
             print(f"Success. {filename} moved to Mac and deleted from Raspi.")
     except subprocess.CalledProcessError as e:
         print(f"Failed to send image: {e}")

@@ -13,6 +13,7 @@ from file_transfer import FileTransfer
 from milestone5_file_transfer import FileTransfer5
 from pathlib import Path
 import config as c
+from transfer_manager import start_worker
 
 app = Flask(__name__)
 app.secret_key = "a_very_secret_key_here"
@@ -241,4 +242,5 @@ def stop_script():
     return redirect(url_for("index"))
 
 if __name__ == "__main__":
+    start_worker()
     app.run(host="0.0.0.0", port=5001, debug=False, threaded=True)

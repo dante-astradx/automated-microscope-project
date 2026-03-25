@@ -157,17 +157,17 @@ class FileTransfer5:
 
     def get_rsync_path(self, milestone_prefix):
         if milestone_prefix == "M1":
-            rsync_path = "/Volumes/T9/Milestone_1/Data_Collection_7"
+            rsync_path = f"/Volumes/{c.EXTERNAL_SSD}/Milestone_1/Data_Collection_7"
         elif milestone_prefix == "M2":
-            rsync_path = "/Volumes/T9/Milestone_2/Data_Collection_6"
+            rsync_path = f"/Volumes/{c.EXTERNAL_SSD}/Milestone_2/Data_Collection_6"
         elif milestone_prefix == "M3":
-            rsync_path = "/Volumes/T9/Milestone_3/Data_Collection_7"
+            rsync_path = f"/Volumes/{c.EXTERNAL_SSD}/Milestone_3/Data_Collection_7"
         elif milestone_prefix == "M7":
-            rsync_path = "/Volumes/T9/Milestone_7/Data_Collection_2"
+            rsync_path = f"/Volumes/{c.EXTERNAL_SSD}/Milestone_7/Data_Collection_3"
         elif milestone_prefix == "ID":
-            rsync_path = "/Volumes/T9/ID/Data_Collection_2"
+            rsync_path = f"/Volumes/{c.EXTERNAL_SSD}/ID/Data_Collection_2"
         else: # Milestone 5 and RA condition
-            rsync_path = "/Volumes/T9/Milestone_5/Data_Collection_8"
+            rsync_path = f"/Volumes/{c.EXTERNAL_SSD}/Milestone_5/Data_Collection_9"
 
         if milestone_prefix not in self.milestone_list:
             self.milestone_list.append(milestone_prefix)
@@ -214,12 +214,12 @@ class FileTransfer5:
             for milestone in self.milestone_list:
                 print(f"Saving background images for Milestone: {milestone}")
                 if milestone == "RA":
-                    rsync_no_slide = "/Volumes/T9/Milestone_5/no-slide"
+                    rsync_no_slide = f"/Volumes/{c.EXTERNAL_SSD}/Milestone_5/no-slide"
                 elif milestone == "ID":
-                    rsync_no_slide = "/Volumes/T9/ID/no-slide"
+                    rsync_no_slide = f"/Volumes/{c.EXTERNAL_SSD}/ID/no-slide"
                 else:
                     milestone_number = milestone[1]
-                    rsync_no_slide = f"/Volumes/T9/Milestone_{milestone_number}/no-slide"
+                    rsync_no_slide = f"/Volumes/{c.EXTERNAL_SSD}/Milestone_{milestone_number}/no-slide"
 
                 print(f"Saving background images to path: {rsync_no_slide}")
 
@@ -239,12 +239,12 @@ class FileTransfer5:
             for milestone in self.milestone_list:
                 print(f"Saving darkfield images for Milestone: {milestone}")
                 if milestone == "RA":
-                    rsync_no_light = "/Volumes/T9/Milestone_5/no-light"
+                    rsync_no_light = f"/Volumes/{c.EXTERNAL_SSD}/Milestone_5/no-light"
                 elif milestone == "ID":
-                    rsync_no_light = "/Volumes/T9/ID/no-light"
+                    rsync_no_light = f"/Volumes/{c.EXTERNAL_SSD}/ID/no-light"
                 else:
                     milestone_number = milestone[1]
-                    rsync_no_light = f"/Volumes/T9/Milestone_{milestone_number}/no-light"
+                    rsync_no_light = f"/Volumes/{c.EXTERNAL_SSD}/Milestone_{milestone_number}/no-light"
 
                 print(f"Saving darkfield images to path: {rsync_no_light}")
 

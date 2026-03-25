@@ -20,6 +20,7 @@ import light_controller as lc
 import time
 import math
 from pathlib import Path
+from transfer_manager import enqueue_folder
 
 class Motor:
     def __init__(self, filename, logger=print):
@@ -122,6 +123,13 @@ class Motor:
 
         # Two Slide offset - Initialize with 0 by default i.e. Slide 1, will be 25 for Slide 2
         self.slide_y_offset = 0
+
+    def initiate_transfer_queue(self, focus_view, obj):
+        """Queue the completed zstack folder for transfer to Mac."""
+        folder_path = self.filename.data_path_generator(focus_view, obj)
+        basename = os.path.basename(folder_path)
+        self.logger(f"Queuing {basename} for upload to Mac")
+        enqueue_folder(folder_path, self.filename.barcode)
 
     def stop(self):
         # Signal the motor to stop gracefully
@@ -760,6 +768,7 @@ class Motor:
 
                 # 10x imaging at x,y
                 self.collect_data_with_10x()
+                self.initiate_transfer_queue(self.focus_view, self.obj)
 
                 # 20x, 40x imaging at x,y
                 self.collect_data_with_20x_40x(2)
@@ -773,7 +782,10 @@ class Motor:
                 self.check_stop()
 
                 self.collect_data_with_20x_40x(2)
+                self.initiate_transfer_queue(self.focus_view, self.obj)
+
                 self.collect_data_with_20x_40x(3)
+                self.initiate_transfer_queue(self.focus_view, self.obj)
 
         self.logger("Data collection finished. All images have been taken and saved to Images folder")
         self.stop_imaging()
@@ -847,6 +859,7 @@ class Motor:
                                 self.logger("Running QC check on zstack")
                                 if self.qc_check_focus():
                                     self.logger(f"{name} QC Passed.")
+                                    self.initiate_transfer_queue(self.focus_view, self.obj)
                                     passed_qc = True
                                     break # Success! Exit the retry loop and go to next stage
                                 else:
@@ -856,6 +869,7 @@ class Motor:
                                         self.logger(f"Retrying {name} collection...")
                                     else:
                                         self.logger(f"{name} failed twice. Moving to next objective/step.")
+                                        self.initiate_transfer_queue(self.focus_view, self.obj)
                         self.move_carousel("1")
                     else:
                         self.logger(f"Fov rejected at {x_pos},{y_coord}. Moving to next position")
@@ -883,6 +897,10 @@ class Motor:
 
         self.logger("Recreating the original folder path: {zstack_folder_path}")
         Path(zstack_folder_path).mkdir(parents=True, exist_ok=True)
+
+        """Queue the failed zstack folder for transfer to Mac."""
+        self.logger(f"Queuing {os.path.basename(new_folder_path)} for upload to Mac")
+        enqueue_folder(new_folder_path, self.filename.barcode)
 
     def qc_check_focus(self):
         zstack_folder_path = self.filename.data_path_generator(self.focus_view, self.obj)
