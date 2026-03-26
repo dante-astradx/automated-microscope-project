@@ -20,7 +20,7 @@ import light_controller as lc
 import time
 import math
 from pathlib import Path
-from transfer_manager import enqueue_folder
+from transfer_manager import enqueue_folder, mark_slide_done
 
 class Motor:
     def __init__(self, filename, logger=print):
@@ -788,6 +788,7 @@ class Motor:
                 self.initiate_transfer_queue(self.focus_view, self.obj)
 
         self.logger("Data collection finished. All images have been taken and saved to Images folder")
+        mark_slide_done(self.filename.barcode)
         self.stop_imaging()
 
     def collect_data_with_search_algorithm(self, smear_list, fov_list):
@@ -884,6 +885,7 @@ class Motor:
                             f"for smear {smear_id}.")
 
         self.logger("Data collection finished. All images have been taken and saved to Images folder")
+        mark_slide_done(self.filename.barcode)
         self.stop_imaging()
 
     def handle_failed_qc(self):

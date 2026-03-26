@@ -30,8 +30,8 @@ def send_image_to_mac(filename):
         result = subprocess.run(rsync_send, check=True)
         # If rsync succeeded, delete the local .tif file
         if result.returncode == 0:
-            os.remove(image_path)
-            os.remove(json_image_folder_path)
+            #os.remove(image_path)
+            #os.remove(json_image_folder_path)
             print(f"Success. {filename} moved to Mac and deleted from Raspi.")
     except subprocess.CalledProcessError as e:
         print(f"Failed to send image: {e}")
@@ -100,4 +100,4 @@ def send_darkfield_image_to_mac(filename, raspi_folder_path):
 
 if __name__ == "__main__":
     pass
-    send_image_to_mac("IDI777_16:37:07.372343_20260224_M1_SM1_146.0x_13.5y_217z_fov_detection.tif")
+    send_image_to_mac("IDIIII_16:23:17.658837_20260325_M1_SM1_146.0x_14.0y_375z_fov_detection.tif")

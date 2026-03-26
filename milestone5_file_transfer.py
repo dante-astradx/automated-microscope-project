@@ -175,6 +175,94 @@ class FileTransfer5:
 
         return rsync_path
 
+    def get_correction_rsync_path(self, milestone_prefix, corr_type):
+        if corr_type not in ["no-slide", "no-light"]:
+            raise ValueError("corr_type must be 'no-slide' or 'no-light'")
+
+        if milestone_prefix == "RA":
+            base = f"/Volumes/{c.EXTERNAL_SSD}/Milestone_5/{corr_type}"
+        elif milestone_prefix == "ID":
+            base = f"/Volumes/{c.EXTERNAL_SSD}/ID/{corr_type}"
+        else:
+            milestone_number = milestone_prefix[1] if len(milestone_prefix) > 1 else "5"
+            base = f"/Volumes/{c.EXTERNAL_SSD}/Milestone_{milestone_number}/{corr_type}"
+
+        return base
+
+    def derive_milestones_from_log(self):
+        try:
+            from folder_name_logger import log as folder_name_log
+        except ImportError:
+            folder_name_log = []
+
+        milestone_set = set()
+        for entry in folder_name_log:
+            folder_name = entry.get("folder_name", "")
+            prefix = self.extract_prefix(folder_name)
+            if prefix:
+                milestone_set.add(prefix)
+
+        # If no data found, fall back to default milestone
+        if not milestone_set:
+            milestone_set = {"M5"}
+
+        return sorted(milestone_set)
+
+    def get_old_correction_folders(self, date=None):
+        if date is None:
+            date = datetime.today().strftime("%Y%m%d")
+
+        folders = []
+        base_path = Path(self.pi_image_dir)
+
+        for child in base_path.iterdir():
+            if not child.is_dir():
+                continue
+
+            if child.name.startswith("no-slide_") or child.name.startswith("no-light_"):
+                # folder name format: no-slide_YYYYMMDD_M1
+                parts = child.name.split("_")
+                if len(parts) >= 3 and parts[1] != date:
+                    folders.append(child.name)
+
+        return folders
+
+    def upload_previous_correction_images(self, date=None):
+        folders = self.get_old_correction_folders(date)
+
+        if not folders:
+            self.logger("No previous correction folders found to transfer.")
+            return True
+
+        if not self.milestone_list:
+            self.milestone_list = self.derive_milestones_from_log()
+
+        success_all = True
+        for folder_name in folders:
+            correction_type = "no-slide" if folder_name.startswith("no-slide_") else "no-light"
+            all_success = True
+
+            for milestone in self.milestone_list:
+                rsync_path = self.get_correction_rsync_path(milestone, correction_type)
+                self.logger(f"Uploading correction folder {folder_name} to {rsync_path} (milestone {milestone})")
+                transferred = self.upload_to_laptop_rsync(folder_name, rsync_path, delete_files=False)
+                if not transferred:
+                    all_success = False
+                    self.logger(f"Failed to transfer {folder_name} to {rsync_path}")
+
+            if all_success:
+                local_folder = Path(self.pi_image_dir) / folder_name
+                try:
+                    shutil.rmtree(local_folder)
+                    self.logger(f"Deleted local correction folder {folder_name} after successful transfer")
+                except Exception as e:
+                    self.logger(f"Could not delete local correction folder {folder_name}: {e}")
+                    success_all = False
+            else:
+                success_all = False
+
+        return success_all
+
     def save_all_data(self, folder_name_dict):
         self.move_scanning_images()
 

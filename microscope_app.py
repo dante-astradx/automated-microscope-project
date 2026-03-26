@@ -160,6 +160,16 @@ def check_light():
 def pre_imaging():
     global motor_instance
 
+    # Start clean-up upload of prior correction images (no-slide/no-light) before new daily capture.
+    def correction_upload_task():
+        try:
+            prev_ft = FileTransfer5(logger=log_output)
+            prev_ft.upload_previous_correction_images()
+        except Exception as e:
+            log_output(f"Error uploading previous correction images: {e}")
+
+    threading.Thread(target=correction_upload_task, daemon=True).start()
+
     generate_background_folders()
     generate_darkfield_folders()
 
@@ -170,7 +180,7 @@ def pre_imaging():
         motor_instance.take_dark_background_image()
         update_status("Background and darkfield images complete")
 
-    threading.Thread(target=pre_imaging_task).start()
+    threading.Thread(target=pre_imaging_task, daemon=True).start()
 
     #current_step = "background_in_progress"
     return redirect(url_for("index"))

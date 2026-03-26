@@ -8,6 +8,7 @@ from config import PI_IMAGE_DIR
 
 _transfer_queue = queue.Queue()
 _worker = None
+_done_slides = set()
 
 
 class TransferWorker(threading.Thread):
@@ -25,6 +26,28 @@ class TransferWorker(threading.Thread):
                 continue
 
             folder_path, barcode = item
+
+            # Handle final slide upload task
+            if folder_path == "final":
+                try:
+                    file_transfer = FileTransfer5(logger=log_output)
+                    file_transfer.set_barcode(barcode)
+                    remote_path = file_transfer.get_rsync_path(file_transfer.extract_prefix(barcode))
+                    log_output(f"TransferWorker: starting final upload for {barcode} to {remote_path}")
+                    success = file_transfer.upload_to_laptop_rsync(barcode, remote_path, delete_files=True)
+                    if success:
+                        _done_slides.discard(barcode)  # Remove from done set after successful final upload
+                        log_output(f"TransferWorker: final upload successful for {barcode}")
+                    else:
+                        log_output(f"TransferWorker: final upload failed for {barcode}, will retry later")
+                        # Re-enqueue the final task after a delay
+                        time.sleep(60)  # Wait 1 minute before retry
+                        _transfer_queue.put(("final", barcode))
+                except Exception as e:
+                    log_output(f"TransferWorker: error in final upload for {barcode}: {e}")
+                finally:
+                    _transfer_queue.task_done()
+                continue
 
             if not folder_path or not os.path.exists(folder_path):
                 log_output(f"TransferWorker: folder path missing or removed: {folder_path}")
@@ -60,6 +83,11 @@ class TransferWorker(threading.Thread):
 
             finally:
                 _transfer_queue.task_done()
+
+                # Check if this was the last task for a done slide, and enqueue final upload
+                if _transfer_queue.empty() and barcode in _done_slides:
+                    log_output(f"TransferWorker: all tasks done for {barcode}, enqueuing final upload")
+                    _transfer_queue.put(("final", barcode))
 
         log_output("TransferWorker: stopped")
 
@@ -101,6 +129,13 @@ def enqueue_folder(folder_path, barcode):
 
     log_output(f"enqueue_folder: queued {folder_path} for barcode {barcode}")
     _transfer_queue.put((folder_path, barcode))
+
+
+def mark_slide_done(barcode):
+    """Mark a barcode as done with data collection."""
+    if barcode:
+        _done_slides.add(barcode)
+        log_output(f"mark_slide_done: marked {barcode} as done")
 
 
 def queue_size():
