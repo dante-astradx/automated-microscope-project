@@ -137,6 +137,11 @@ def mark_slide_done(barcode):
         _done_slides.add(barcode)
         log_output(f"mark_slide_done: marked {barcode} as done")
 
+        # If the queue is already empty, we may need to start final upload immediately.
+        if _transfer_queue.empty():
+            log_output(f"mark_slide_done: queue is empty after marking {barcode}, enqueuing final upload")
+            _transfer_queue.put(("final", barcode))
+
 
 def queue_size():
     return _transfer_queue.qsize()
