@@ -6,7 +6,7 @@ from datetime import datetime
 import re
 
 def extract_prefix(s):
-    match = re.match(r"(RA|ID|M\d)", s)
+    match = re.match(r"(WBC|RA|ID|M\d)", s)
     if not match:
         return None
 
@@ -31,6 +31,9 @@ def get_spreadsheet_tab_names(barcode):
     elif barcode_prefix == "ID":
         tab_master = "ID SMEARS - Imaging Master List"
         tab_log = "ID SMEARS - Imaging Log"
+    elif barcode_prefix == "WBC":
+        tab_master = "WBC SMEARS - Imaging Master List"
+        tab_log = "WBC SMEARS - Imaging Log"
     else:
         tab_master = "Milestone 5 - Imaging Master List"
         tab_log = "Milestone 5 - Imaging Log"
@@ -102,6 +105,6 @@ def log_milestone_run(
 
 if __name__ == "__main__":
     pass
-    s = extract_prefix("IDI777")
+    s = extract_prefix("WBCMMMM")
     print(s)
-    log_milestone_run("IDI777", "10, 20, 40x zstack")
+    log_milestone_run("WBCMMMM", "10, 20, 40x zstack")

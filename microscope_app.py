@@ -1,6 +1,14 @@
 from flask import Flask, render_template, request, redirect, url_for, flash, jsonify, Response, send_file
 from folder_name_logger import add_entry, clear_log, clear_last_entry, check_barcode, lookup_smear_coordinates, csv_lookup
-from microscope_log import log_output, update_status, get_log_queue, get_status_message
+from microscope_log import (
+    log_output,
+    update_status,
+    get_log_queue,
+    get_status_message,
+    get_scoreboard_state,
+    update_scoreboard,
+    reset_scoreboard,
+)
 from folder_generator import generate_barcode_folders, generate_background_folders, generate_darkfield_folders, delete_barcode_folders, check_pre_imaging
 from light_controller import toggle_light
 from google_sheet_editor import log_milestone_run
@@ -8,6 +16,7 @@ import subprocess
 import time
 import json
 import threading
+from datetime import datetime
 from motor import Motor
 from file_transfer import FileTransfer
 from milestone5_file_transfer import FileTransfer5
@@ -29,6 +38,11 @@ def index():
 def status():
     """AJAX endpoint to fetch the latest status message."""
     return jsonify({"status_message": get_status_message()})
+
+@app.route("/scoreboard", methods=["GET"])
+def scoreboard():
+    """AJAX endpoint to fetch structured imaging progress for the GUI scoreboard."""
+    return jsonify(get_scoreboard_state())
 
 @app.route("/stream")
 def stream():
@@ -62,6 +76,7 @@ def start():
 
     num_slides = request.form.get("num_slides")
     imaging_mode = request.form.get("imaging_mode")
+    run_start_date = datetime.today().strftime("%Y%m%d")
 
     # Gather data for all slides into a list of dictionaries
     slides_to_run = []
@@ -106,48 +121,55 @@ def start():
 
     # define actual imaging data task
     def data_task():
-        for slide in slides_to_run:
-            # Check for stop request between slides
-            #if motor_instance and motor_instance.stop_requested:
-            #    break
+        try:
+            for slide in slides_to_run:
+                update_scoreboard(barcode=slide["barcode"], smear=None, fov=None, status="imaging")
 
-            #update_status(f"Starting imaging for Barcode: {slide['barcode']}")
-            # Add to folder log
-            try:
-                add_entry(slide["barcode"])
-            except Exception as e:
-                log_output(f"Error adding to log: {str(e)}")
+                #update_status(f"Starting imaging for Barcode: {slide['barcode']}")
+                # Add to folder log
+                try:
+                    add_entry(slide["barcode"])
+                except Exception as e:
+                    log_output(f"Error adding to log: {str(e)}")
 
-            # Initialize file transfer for this specific barcode
-            file = FileTransfer5(logger=log_output)
-            file.set_barcode(slide["barcode"])
+                # Initialize file transfer for this specific barcode
+                file = FileTransfer5(logger=log_output, run_date=run_start_date)
+                file.set_barcode(slide["barcode"])
 
-            # Initialize motor with the specific Y-offset for this slide
-            motor_instance = Motor(filename=file, logger=log_output)
-            motor_instance.slide_y_offset = slide["offset"] # Passed to motor for coordinate math
+                # Initialize motor with the specific Y-offset for this slide
+                motor_instance = Motor(filename=file, logger=log_output)
+                motor_instance.slide_y_offset = slide["offset"] # Passed to motor for coordinate math
 
-            log_milestone_run(slide["barcode"], "10, 20, 40x zstack")
+                log_milestone_run(slide["barcode"], "10, 20, 40x zstack")
 
-            if imaging_mode == "XY_Coordinate":
-                smear_ids, coords = csv_lookup(slide["barcode"], slide["smears"])
+                if imaging_mode == "XY_Coordinate":
+                    smear_ids, coords = csv_lookup(slide["barcode"], slide["smears"])
 
-                fovs = [len(c) for c in coords]
-                generate_barcode_folders(slide["barcode"], slide["smears"], fovs)
+                    fovs = [len(c) for c in coords]
+                    generate_barcode_folders(slide["barcode"], slide["smears"], fovs, run_date=run_start_date)
 
-                update_status(f"Imaging barcode {slide['barcode']} & imaging coordinates: {coords}")
-                motor_instance.collect_data_milestone5_xy(smear_ids, coords)
+                    update_status(f"Imaging barcode {slide['barcode']} & imaging coordinates: {coords}")
+                    motor_instance.collect_data_milestone5_xy(smear_ids, coords)
+                    #motor_instance.wbc_imaging_xy(smear_ids, coords)
 
-            elif imaging_mode == "Search_Algorithm":
-                desired_fov = 5
-                fovs = [desired_fov for _ in slide["smears"]]
+                elif imaging_mode == "Search_Algorithm":
+                    desired_fov = 5
+                    fovs = [desired_fov for _ in slide["smears"]]
 
-                generate_barcode_folders(slide["barcode"], slide["smears"], fovs)
+                    generate_barcode_folders(slide["barcode"], slide["smears"], fovs, run_date=run_start_date)
 
-                update_status(f"Imaging barcode {slide['barcode']}. Searching for {desired_fov} FOV's at {slide['smears']}")
-                motor_instance.collect_data_with_search_algorithm(slide["smears"], fovs)
+                    update_status(f"Imaging barcode {slide['barcode']}. Searching for {desired_fov} FOV's at {slide['smears']}")
+                    motor_instance.collect_data_with_search_algorithm(slide["smears"], fovs)
 
-        #update_status("Multi-slide data collection complete")
+            update_scoreboard(barcode=None, smear=None, fov=None, status="complete")
+            time.sleep(2)
+            reset_scoreboard()
+            #update_status("Multi-slide data collection complete")
+        except Exception as e:
+            update_scoreboard(status="error")
+            log_output(f"Error in data task: {e}")
 
+    update_scoreboard(barcode=None, smear=None, fov=None, status="preparing")
     threading.Thread(target=data_task, daemon=True).start()
     return redirect(url_for("index"))
 
@@ -243,6 +265,7 @@ def stop_script():
         # Reset the state
         motor_instance = None
         current_step = None
+        reset_scoreboard()
         update_status("Microscope run stopped. Last entry cleared.")
 
         flash("Microscope stopped safely and last log entry cleared.", "success")

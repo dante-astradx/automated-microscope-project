@@ -13,7 +13,7 @@ from milestone5_file_transfer import FileTransfer5
 import analysis as a
 from datetime import datetime
 from datetime import date
-from microscope_log import log_output, log_to_file_only, update_status
+from microscope_log import log_output, log_to_file_only, update_status, update_scoreboard
 from mac_comms import send_background_image_to_mac, send_darkfield_image_to_mac, send_image_to_mac
 from json_handler import read_json
 import light_controller as lc
@@ -270,6 +270,7 @@ class Motor:
 
         self.logger(f"Smear ID set to {smear_id}")
         self.filename.set_smear_id(smear_id)
+        update_scoreboard(smear=smear_id, fov=None, status="imaging")
 
     # Function to move x-axis
     def move_x_axis(self, x_pos):
@@ -695,51 +696,34 @@ class Motor:
         self.logger(f"10x: {self.focus_preset_10x}, 20x: {self.focus_preset_20x}, 40x: {self.focus_preset_40x}")
         return self.focus_preset_10x, self.focus_preset_20x, self.focus_preset_40x
 
-    def collect_data_milestone5(self, fov, smear_list):
+    def wbc_imaging_xy(self, smear_list, xy_coords):
         self.start_imaging()
+        smear_id = smear_list[0]
+        self.set_smear_id(smear_id)
+        self.focus_view = 0
+        self.first_scan_for_focus_preset([smear_id])
 
-        self.first_scan_for_focus_preset(smear_list)
+        for i in range(len(xy_coords[0])):
+            x_pos = xy_coords[0][i][0]
+            y_pos = xy_coords[0][i][1]
 
-        for i in range(len(smear_list)):
-            smear_id = smear_list[i]
-            self.set_smear_id(smear_id)
+            self.logger(f"Collecting data at {x_pos}, {y_pos + self.slide_y_offset} in {smear_id}")
 
-            bacteria_locations = self.search_for_bacteria(fov, smear_id)
+            self.check_stop()
+            self.focus_view += 1
+            update_scoreboard(fov=self.focus_view, status="imaging")
 
-            if not bacteria_locations:
-                self.logger(f"No bacteria identified on {smear_id}. MOVING TO NEXT SMEAR")
-            else:
-                self.check_stop()
-                self.focus_view = 0
-                for i in range(len(bacteria_locations)):
-                    self.check_stop()
+            self.home_axis("X, Y")
+            self.move_x_axis(x_pos)
+            self.move_y_axis(y_pos)
+            self.check_stop()
 
-                    self.home_axis("X, Y")
-                    self.current_x = bacteria_locations[i][0]
-                    self.current_y = bacteria_locations[i][1]
-                    self.move_x_axis(self.current_x)
-                    self.move_y_axis(self.current_y)
-                    self.focus_view += 1
-                    self.check_stop()
-
-                    # 10x imaging at x,y
-                    self.collect_data_with_10x()
-
-                    # 20x, 40x imaging at x,y
-                    self.collect_data_with_20x_40x(2)
-                    self.collect_data_with_20x_40x(3)
-
-                    # 20x, 40x imaging at x+0.25, y+0.25
-                    self.current_x += 0.25
-                    self.current_y += 0.25
-                    self.move_x_axis(self.current_x)
-                    self.move_y_axis(self.current_y)
-                    self.check_stop()
-
-                    self.collect_data_with_20x_40x(2)
-                    self.collect_data_with_20x_40x(3)
+            # 10x imaging at x,y
+            self.collect_data_with_10x()
+            self.initiate_transfer_queue(self.focus_view, self.obj)
 
         self.logger("Data collection finished. All images have been taken and saved to Images folder")
+        mark_slide_done(self.filename.barcode)
         self.stop_imaging()
 
     def collect_data_milestone5_xy(self, smear_list, xy_coords):
@@ -760,6 +744,7 @@ class Motor:
 
                 self.check_stop()
                 self.focus_view += 1
+                update_scoreboard(fov=self.focus_view, status="imaging")
 
                 self.home_axis("X, Y")
                 self.move_x_axis(x_pos)
@@ -837,6 +822,7 @@ class Motor:
                         self.logger(f"Good fov detected at {x_pos},{y_coord}. Taking zstacks!")
                         self.filename.append_csv(self.current_x, self.current_y, self.current_z, True)
                         self.focus_view += 1
+                        update_scoreboard(fov=self.focus_view, status="imaging")
 
                         #self.collect_data_with_10x()
                         #self.collect_data_with_20x_40x(2)

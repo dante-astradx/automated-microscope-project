@@ -14,10 +14,10 @@ import csv
 import json
 
 class FileTransfer5:
-    def __init__(self, logger=print):
+    def __init__(self, logger=print, run_date=None):
         self.base_file_path = None
         self.barcode = None
-        self.date = date.today().strftime("%Y%m%d")
+        self.date = run_date if run_date is not None else date.today().strftime("%Y%m%d")
         self.smear_id = None
 
         self.first_folder = None
@@ -149,7 +149,7 @@ class FileTransfer5:
                 print(f"Moved: {filename}")
 
     def extract_prefix(self, s):
-        match = re.match(r"(RA|ID|M\d)", s)
+        match = re.match(r"(WBC|RA|ID|M\d)", s)
         if not match:
             return None
 
@@ -166,6 +166,8 @@ class FileTransfer5:
             rsync_path = f"/Volumes/{c.EXTERNAL_SSD}/Milestone_7/Data_Collection_3"
         elif milestone_prefix == "ID":
             rsync_path = f"/Volumes/{c.EXTERNAL_SSD}/ID/Data_Collection_2"
+        elif milestone_prefix == "WBC":
+            rsync_path = f"/Volumes/{c.EXTERNAL_SSD}/WBC/Data_Collection_1"
         else: # Milestone 5 and RA condition
             rsync_path = f"/Volumes/{c.EXTERNAL_SSD}/Milestone_5/Data_Collection_9"
 
@@ -183,6 +185,8 @@ class FileTransfer5:
             base = f"/Volumes/{c.EXTERNAL_SSD}/Milestone_5/{corr_type}"
         elif milestone_prefix == "ID":
             base = f"/Volumes/{c.EXTERNAL_SSD}/ID/{corr_type}"
+        elif milestone_prefix == "WBC":
+            base = f"/Volumes/{c.EXTERNAL_SSD}/WBC/{corr_type}"
         else:
             milestone_number = milestone_prefix[1] if len(milestone_prefix) > 1 else "5"
             base = f"/Volumes/{c.EXTERNAL_SSD}/Milestone_{milestone_number}/{corr_type}"
@@ -305,6 +309,8 @@ class FileTransfer5:
                     rsync_no_slide = f"/Volumes/{c.EXTERNAL_SSD}/Milestone_5/no-slide"
                 elif milestone == "ID":
                     rsync_no_slide = f"/Volumes/{c.EXTERNAL_SSD}/ID/no-slide"
+                elif milestone == "WBC":
+                    rsync_no_slide = f"/Volumes/{c.EXTERNAL_SSD}/WBC/no-slide"
                 else:
                     milestone_number = milestone[1]
                     rsync_no_slide = f"/Volumes/{c.EXTERNAL_SSD}/Milestone_{milestone_number}/no-slide"
@@ -330,6 +336,8 @@ class FileTransfer5:
                     rsync_no_light = f"/Volumes/{c.EXTERNAL_SSD}/Milestone_5/no-light"
                 elif milestone == "ID":
                     rsync_no_light = f"/Volumes/{c.EXTERNAL_SSD}/ID/no-light"
+                elif milestone == "WBC":
+                    rsync_no_light = f"/Volumes/{c.EXTERNAL_SSD}/WBC/no-light"
                 else:
                     milestone_number = milestone[1]
                     rsync_no_light = f"/Volumes/{c.EXTERNAL_SSD}/Milestone_{milestone_number}/no-light"

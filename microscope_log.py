@@ -11,6 +11,15 @@ _log_queue = queue.Queue()        # thread-safe queue for streaming
 _file_queue = queue.Queue()       # thread-safe queue for file writes
 _status_message = None
 _stop_event = threading.Event()   # signal for stopping writer thread
+_scoreboard_lock = threading.Lock()
+_UNSET = object()
+_scoreboard_state = {
+    "barcode": None,
+    "smear": None,
+    "fov": None,
+    "status": "idle",
+    "updated_at": None,
+}
 
 # --- Where logs are stored ---
 LOG_DIR = f"/home/{c.MICROSCOPE_USERNAME}/project_files"
@@ -85,6 +94,36 @@ def get_log_queue():
         except queue.Empty:
             break
     return items
+
+def _utc_now_iso():
+    return datetime.utcnow().isoformat(timespec="seconds")
+
+def get_scoreboard_state():
+    """Return a snapshot of the scoreboard state for API responses."""
+    with _scoreboard_lock:
+        return dict(_scoreboard_state)
+
+def update_scoreboard(barcode=_UNSET, smear=_UNSET, fov=_UNSET, status=_UNSET):
+    """Update one or more scoreboard fields; pass None explicitly to clear a field."""
+    with _scoreboard_lock:
+        if barcode is not _UNSET:
+            _scoreboard_state["barcode"] = barcode
+        if smear is not _UNSET:
+            _scoreboard_state["smear"] = smear
+        if fov is not _UNSET:
+            _scoreboard_state["fov"] = fov
+        if status is not _UNSET:
+            _scoreboard_state["status"] = status
+        _scoreboard_state["updated_at"] = _utc_now_iso()
+
+def reset_scoreboard():
+    """Reset scoreboard to idle defaults."""
+    with _scoreboard_lock:
+        _scoreboard_state["barcode"] = None
+        _scoreboard_state["smear"] = None
+        _scoreboard_state["fov"] = None
+        _scoreboard_state["status"] = "idle"
+        _scoreboard_state["updated_at"] = _utc_now_iso()
 
 # --- Redirect stdout/stderr to log file ---
 class StdoutLogger:

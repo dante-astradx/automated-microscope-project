@@ -7,7 +7,7 @@ import csv
 
 microscope_id = c.MICROSCOPE_ID
 
-def generate_barcode_folders(barcode: str, smear_list, fovs):
+def generate_barcode_folders(barcode: str, smear_list, fovs, run_date=None):
 
     # Create folder structure for given barcode.
     # Returns path to the microscope-level directory.
@@ -20,7 +20,7 @@ def generate_barcode_folders(barcode: str, smear_list, fovs):
     root_dir.mkdir(parents=True, exist_ok=True)
 
     # Step 2: Date subfolder
-    today = datetime.today().strftime("%Y%m%d")
+    today = run_date if run_date is not None else datetime.today().strftime("%Y%m%d")
     date_dir = root_dir / f"{barcode}_{today}"
     date_dir.mkdir(parents=True, exist_ok=True)
 
@@ -147,7 +147,7 @@ if __name__ == '__main__':
     pass
 
     # --- Test Folder Generation ---
-    generate_barcode_folders("IDI777", ["SM1"], [1])
+    generate_barcode_folders("WBCWWWW", ["SM1"], [1])
     #generate_barcode_folders("M3ABCD", ["SM1", "SM2", "SM3"])
     #generate_barcode_folders("M2ABCD", ["SM1", "SM2", "SM3"])
     #generate_barcode_folders("RA0000", ["SM1", "SM2", "SM3"])
