@@ -209,8 +209,8 @@ if __name__ == "__main__":
     pass
     clear_log()
     #clear_last_entry()
-    s = extract_prefix("WBCWWWW")
-    print(s)
-    smear_id, coords = csv_lookup("WBCMMMM", ["SM1"])
-    print(smear_id)
-    print(coords)
+    #s = extract_prefix("WBCWWWW")
+    #print(s)
+    #smear_id, coords = csv_lookup("WBCMMMM", ["SM1"])
+    #print(smear_id)
+    #print(coords)

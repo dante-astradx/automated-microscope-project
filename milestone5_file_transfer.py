@@ -164,12 +164,14 @@ class FileTransfer5:
             rsync_path = f"/Volumes/{c.EXTERNAL_SSD}/Milestone_3/Data_Collection_7"
         elif milestone_prefix == "M7":
             rsync_path = f"/Volumes/{c.EXTERNAL_SSD}/Milestone_7/Data_Collection_3"
+        elif milestone_prefix == "M8":
+            rsync_path = f"/Volumes/{c.EXTERNAL_SSD}/Milestone_8/Data_Collection_1"
         elif milestone_prefix == "ID":
             rsync_path = f"/Volumes/{c.EXTERNAL_SSD}/ID/Data_Collection_2"
         elif milestone_prefix == "WBC":
             rsync_path = f"/Volumes/{c.EXTERNAL_SSD}/WBC/Data_Collection_1"
         else: # Milestone 5 and RA condition
-            rsync_path = f"/Volumes/{c.EXTERNAL_SSD}/Milestone_5/Data_Collection_9"
+            rsync_path = f"/Volumes/{c.EXTERNAL_SSD}/Milestone_5/Data_Collection_10"
 
         if milestone_prefix not in self.milestone_list:
             self.milestone_list.append(milestone_prefix)
