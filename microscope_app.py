@@ -165,9 +165,30 @@ def start():
             time.sleep(2)
             reset_scoreboard()
             #update_status("Multi-slide data collection complete")
+        except RuntimeError as e:
+            message = str(e)
+            if "AUTO-STOP" in message:
+                update_scoreboard(status="autostopped")
+                update_status(message)
+                log_output(message)
+            else:
+                update_scoreboard(status="error")
+                log_output(f"Error in data task: {message}")
+
+            if "motor_instance" in locals() and motor_instance is not None:
+                try:
+                    motor_instance.stop_imaging()
+                except Exception as cleanup_error:
+                    log_output(f"Error during auto-stop cleanup: {cleanup_error}")
         except Exception as e:
             update_scoreboard(status="error")
             log_output(f"Error in data task: {e}")
+
+            if "motor_instance" in locals() and motor_instance is not None:
+                try:
+                    motor_instance.stop_imaging()
+                except Exception as cleanup_error:
+                    log_output(f"Error during exception cleanup: {cleanup_error}")
 
     update_scoreboard(barcode=None, smear=None, fov=None, status="preparing")
     threading.Thread(target=data_task, daemon=True).start()

@@ -28,6 +28,9 @@ def get_spreadsheet_tab_names(barcode):
     elif barcode_prefix == "M7":
         tab_master = "Milestone 7 - Imaging Master List"
         tab_log = "Milestone 7 - Imaging Log"
+    elif barcode_prefix == "M8":
+        tab_master = "Milestone 8 - Imaging Master List"
+        tab_log = "Milestone 8 - Imaging Log"
     elif barcode_prefix == "ID":
         tab_master = "ID SMEARS - Imaging Master List"
         tab_log = "ID SMEARS - Imaging Log"
@@ -105,6 +108,6 @@ def log_milestone_run(
 
 if __name__ == "__main__":
     pass
-    s = extract_prefix("WBCMMMM")
-    print(s)
-    log_milestone_run("WBCMMMM", "10, 20, 40x zstack")
+    #s = extract_prefix("WBCMMMM")
+    #print(s)
+    log_milestone_run("M8AAAA", "10, 20, 40x zstack")

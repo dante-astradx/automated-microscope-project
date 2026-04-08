@@ -143,6 +143,8 @@ def get_spreadsheet_csv(barcode):
         csv_url = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQ-18yNc7T6yJ79Gg8bbdWbB53foW-MTEX78LxqIHkHyF5xVFW_b1yPWI5K-vfrsDtZIp8NOsDTUxfh/pub?gid=963897326&single=true&output=csv"
     elif barcode_prefix == "M7":
         csv_url = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQ-18yNc7T6yJ79Gg8bbdWbB53foW-MTEX78LxqIHkHyF5xVFW_b1yPWI5K-vfrsDtZIp8NOsDTUxfh/pub?gid=1253573499&single=true&output=csv"
+    elif barcode_prefix == "M8":
+        csv_url = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQ-18yNc7T6yJ79Gg8bbdWbB53foW-MTEX78LxqIHkHyF5xVFW_b1yPWI5K-vfrsDtZIp8NOsDTUxfh/pub?gid=1360243811&single=true&output=csv"
     elif barcode_prefix == "WBC":
         csv_url = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQ-18yNc7T6yJ79Gg8bbdWbB53foW-MTEX78LxqIHkHyF5xVFW_b1yPWI5K-vfrsDtZIp8NOsDTUxfh/pub?gid=656506404&single=true&output=csv"
     else:
@@ -211,6 +213,6 @@ if __name__ == "__main__":
     #clear_last_entry()
     #s = extract_prefix("WBCWWWW")
     #print(s)
-    #smear_id, coords = csv_lookup("WBCMMMM", ["SM1"])
+    #smear_id, coords = csv_lookup("M8AAAA", ["SM1", "SM2", "SM3"])
     #print(smear_id)
     #print(coords)

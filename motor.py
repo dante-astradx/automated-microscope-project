@@ -121,6 +121,11 @@ class Motor:
         # Stop Requested
         self.stop_requested = False
 
+        # Auto-stop settings
+        self.auto_stop_enabled = c.AUTO_STOP_ENABLED
+        self.auto_stop_focus_threshold = c.AUTO_STOP_FOCUS_THRESHOLD
+        self.auto_stop_reason = None
+
         # Two Slide offset - Initialize with 0 by default i.e. Slide 1, will be 25 for Slide 2
         self.slide_y_offset = 0
 
@@ -141,6 +146,33 @@ class Motor:
         # Helper to check stop flag and raise if needed
         if self.stop_requested:
             raise RuntimeError("Motor stop requested.")
+
+    def maybe_trigger_auto_stop(self, stage_name, max_score, context=None):
+        if not self.auto_stop_enabled:
+            return
+
+        if max_score is None or max_score >= self.auto_stop_focus_threshold:
+            return
+
+        context = context or {}
+        obj = context.get("obj", self.obj)
+        obj_label = f"{obj}x" if obj is not None else "unknown"
+        smear = context.get("smear", getattr(self.filename, "smear_id", None))
+        fov = context.get("fov", self.focus_view)
+
+        reason = (
+            "AUTO-STOP: Focus score below threshold. "
+            f"stage={stage_name}, obj={obj_label}, smear={smear}, fov={fov}, "
+            f"score={max_score:.2f}, threshold={self.auto_stop_focus_threshold:.2f}. "
+            "Possible light/endstop malfunction."
+        )
+
+        self.auto_stop_reason = reason
+        self.logger(reason)
+        update_status(reason)
+        update_scoreboard(status="autostopped")
+        self.stop()
+        raise RuntimeError(reason)
 
     def start_imaging(self):
         lc.turn_on()
@@ -462,6 +494,8 @@ class Motor:
                 self.logger(f"Max super fine score ({super_fine_max_score}) is less than max fine score ({fine_max_score})")
                 self.logger("Repeating super fine focus scan")
 
+        self.maybe_trigger_auto_stop("super_fine", super_fine_max_score)
+
         return super_fine_z_focus, super_fine_max_score, final_focus_scores
 
     def dynamic_focus(self, ref_z_focus):
@@ -676,6 +710,7 @@ class Motor:
             coarse_z_focus, coarse_max_score, focus_scores = self.focus_scan(0, 600, 20)
             _ , max_score = max(focus_scores, key=lambda x: x[1])
             _ , min_score = min(focus_scores, key=lambda x: x[1])
+            self.maybe_trigger_auto_stop("preset_coarse", coarse_max_score, {"smear": smear_id, "obj": 10, "fov": 0})
 
             if (max_score - min_score) > 10.0:
                 self.focus_preset_10x = coarse_z_focus - 60
@@ -763,7 +798,7 @@ class Motor:
                 self.current_x += 0.25
                 self.current_y += 0.25
                 self.move_x_axis(self.current_x)
-                self.move_y_axis(self.current_y)
+                self.move_y_axis(self.current_y - self.slide_y_offset)
                 self.check_stop()
 
                 self.collect_data_with_20x_40x(2)
@@ -775,6 +810,13 @@ class Motor:
         self.logger("Data collection finished. All images have been taken and saved to Images folder")
         mark_slide_done(self.filename.barcode)
         self.stop_imaging()
+
+        # move x-y axis to position that allows for easier removal of slides only if 2nd slide was imaged
+        if self.slide_y_offset == 25: # this is how we determine if 2nd slide was being imaged
+            self.move_x_axis(130)
+            self.move_y_axis(15)
+        else:
+            pass
 
     def collect_data_with_search_algorithm(self, smear_list, fov_list):
         self.start_imaging()
@@ -824,10 +866,6 @@ class Motor:
                         self.focus_view += 1
                         update_scoreboard(fov=self.focus_view, status="imaging")
 
-                        #self.collect_data_with_10x()
-                        #self.collect_data_with_20x_40x(2)
-                        #self.collect_data_with_20x_40x(3)
-
                         # code logic for implementation with the focus check QC
                         stages = [(self.collect_data_with_10x, "10x", None), (self.collect_data_with_20x_40x, "20x", 2), (self.collect_data_with_20x_40x, "40x", 3)]
                         for collect_func, name, arg in stages:
@@ -873,6 +911,13 @@ class Motor:
         self.logger("Data collection finished. All images have been taken and saved to Images folder")
         mark_slide_done(self.filename.barcode)
         self.stop_imaging()
+
+        # move x-y axis to position that allows for easier removal of slides only if 2nd slide was imaged
+        if self.slide_y_offset == 25: # this is how we determine if 2nd slide was being imaged
+            self.move_x_axis(130)
+            self.move_y_axis(15)
+        else:
+            pass
 
     def handle_failed_qc(self):
         zstack_folder_path = self.filename.data_path_generator(self.focus_view, self.obj)
@@ -969,63 +1014,6 @@ class Motor:
         z_focus, _, focus_scores = self.scan_z_axis_for_focus(True)
         self.complete_zstack(focus_scores)
         self.check_stop()
-
-    def search_for_bacteria(self, fov, smear_id):
-        self.move_carousel("1")
-        scanned_locations = []
-        bacteria_locations = []
-
-        background_filename, background_file_path = self.filename.background_filename_generator(self.obj)
-        darkfield_filename, darkfield_file_path = self.filename.darkfield_filename_generator(self.obj)
-
-        dark_path = f"{darkfield_file_path}/{darkfield_filename}.tif"
-        back_path = f"{background_file_path}/{background_filename}.tif"
-
-        top_search_coords = [(4, 13), (2, 17), (7, 12), (3, 16), (6, 17), (0, 13), (4, 21), (10, 19)]
-
-        self.first_scan_for_focus_preset([smear_id])
-
-        for coord in top_search_coords:
-            self.check_stop()
-
-            self.home_axis("X, Y")
-            coord_to_search = self.search_coord(coord, smear_id)
-
-            start_scan_pos = self.focus_preset_10x
-            end_scan_pos = self.focus_preset_10x + 100
-
-            coarse_z_focus, coarse_max_score, coarse_focus_scores = self.focus_scan(start_scan_pos, end_scan_pos, 10)
-            self.check_stop()
-
-            for j in range(3):
-                fine_z_focus, fine_max_score, fine_focus_scores = self.focus_scan(coarse_z_focus - 6, coarse_z_focus + 6, 1)
-                self.check_stop()
-                if fine_max_score > coarse_max_score or j == 2:
-                    self.move_z_axis(fine_z_focus)
-                    break
-
-            scanning_filename = self.filename.scanning_filename_generator(self.current_x, self.current_y, fine_z_focus)
-            self.logger(f"Taking image! Filename: {scanning_filename}")
-            self.imager.take_rpi_image(100, scanning_filename)
-            time.sleep(15)
-            self.imager.update_latest_image_to_jpg(os.path.join(c.PI_IMAGE_DIR, f"{scanning_filename}.tif"))
-
-            is_there_bacteria = False
-            im_path = f"{c.PI_IMAGE_DIR}/{scanning_filename}.tif"
-            is_there_bacteria = a.is_good_for_ID(im_path, dark_path, back_path)
-
-            self.filename.append_csv(self.current_x, self.current_y, self.current_z, is_there_bacteria)
-
-            if is_there_bacteria:
-                bacteria_locations.append([self.current_x, self.current_y])
-                self.logger("BACTERIA IDENTIFIED")
-            else:
-                self.logger("No bacteria found")
-
-            if len(bacteria_locations) == fov:
-                break
-
-        return bacteria_locations
 
     def test_carousel(self):
         self.home_carousel()
