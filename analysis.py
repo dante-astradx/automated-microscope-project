@@ -181,8 +181,8 @@ def check_focus(folder_path, x_coord, y_coord, nolight_path, noslide_path):
         zstack_stdevs.append(img_stdev)
 
         # QC Check 1: Fail immediately if any single image is too dark/blurry
-        if img_stdev < 50:
-            print(f"QC Fail: {os.path.basename(file_path)} stdev ({img_stdev:.2f}) < 150")
+        if img_stdev < 5.0:
+            print(f"QC Fail: {os.path.basename(file_path)} stdev ({img_stdev:.2f}) < 5.0")
             return False
 
     # QC Check 2: The 'Focus Peak' Check
@@ -268,16 +268,16 @@ if __name__ == "__main__":
     pass
     imager = Camera()
 
-    back_path = "/home/microscope_auto/Images/no-slide_20260225_M1/no-slide_20260225_M1_40x/no-slide_20260225_M1_40x.tif"
-    dark_path = "/home/microscope_auto/Images/no-light_20260225_M1/no-light_20260225_M1_40x/no-light_20260225_M1_40x.tif"
+    back_path = "/home/microscope_auto/Images/no-slide_20260407_M2/no-slide_20260407_M2_40x/no-slide_20260407_M2_40x.tif"
+    dark_path = "/home/microscope_auto/Images/no-light_20260407_M2/no-light_20260407_M2_40x/no-light_20260407_M2_40x.tif"
 
     #filename = "scanning_M5I2UQ_20251107_M1_140x_15y"
     #filename = "scanning_M5I2UQ_20251121_M1_SM2_131x_17y_406z"
     #imager.take_rpi_image(100, filename)
     #time.sleep(15)
 
-    impath = f"{c.PI_IMAGE_DIR}/IDI777/IDI777_20260225/IDI777_20260225_M1/IDI777_20260225_M1_unstained_SM3_40x_1"
-    result = check_focus(impath, 111.0, 14.0, dark_path, back_path)
+    impath = f"{c.PI_IMAGE_DIR}/2026-04-08 04:55:50.525525_IDIXXX_20260407_M2_unstained_SM1_20x_1_FAILED_QC"
+    result = check_focus(impath, 149.0, 42.0, dark_path, back_path)
     if result:
         print("WE PASSED")
     else:

@@ -434,5 +434,5 @@ if __name__ == "__main__":
     #rsync_remote = c.RSYNC_REMOTE
     #file.upload_to_laptop_rsync("M5RCT6", rsync_remote, True)
 
-    path = "/Volumes/T9/ID/Data_Collection_2"
+    path = f"/Volumes/{c.EXTERNAL_SSD}/ID/Data_Collection_2"
     file.upload_to_laptop_rsync("IDI222", path, True)

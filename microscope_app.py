@@ -164,7 +164,7 @@ def start():
             update_scoreboard(barcode=None, smear=None, fov=None, status="complete")
             time.sleep(2)
             reset_scoreboard()
-            #update_status("Multi-slide data collection complete")
+            update_status("Multi-slide data collection complete")
         except RuntimeError as e:
             message = str(e)
             if "AUTO-STOP" in message:
