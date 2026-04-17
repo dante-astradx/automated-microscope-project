@@ -10,6 +10,7 @@ import shutil
 import logging
 from pathlib import Path
 from microscope_log import log_output, log_to_file_only, update_status
+from folder_name_logger import clear_log
 import csv
 import json
 
@@ -267,6 +268,7 @@ class FileTransfer5:
             else:
                 success_all = False
 
+        clear_log()
         return success_all
 
     def save_all_data(self, folder_name_dict):
