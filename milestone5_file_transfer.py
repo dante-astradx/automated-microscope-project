@@ -436,5 +436,5 @@ if __name__ == "__main__":
     #rsync_remote = c.RSYNC_REMOTE
     #file.upload_to_laptop_rsync("M5RCT6", rsync_remote, True)
 
-    path = f"/Volumes/{c.EXTERNAL_SSD}/ID/Data_Collection_2"
-    file.upload_to_laptop_rsync("IDI222", path, True)
+    path = f"/Volumes/{c.EXTERNAL_SSD}/Milestone_8/no-slide"
+    file.upload_to_laptop_rsync("no-slide_20260422_M1", path, False)

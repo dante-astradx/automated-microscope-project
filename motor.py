@@ -786,26 +786,36 @@ class Motor:
                 self.move_y_axis(y_pos)
                 self.check_stop()
 
-                # 10x imaging at x,y
-                self.collect_data_with_10x()
-                self.initiate_transfer_queue(self.focus_view, self.obj)
+                # code logic for implementation with the focus check QC
+                #stages = [(self.collect_data_with_10x, "10x", None), (self.collect_data_with_20x_40x, "20x", 2), (self.collect_data_with_20x_40x, "40x", 3)]
+                stages = [(self.collect_data_with_20x_40x, "40x", 3)]
+                for collect_func, name, arg in stages:
+                    passed_qc = False
 
-                # 20x, 40x imaging at x,y
-                self.collect_data_with_20x_40x(2)
-                self.collect_data_with_20x_40x(3)
+                    # Try up to 2 times
+                    for attempt in range(1, 3):
+                        self.logger(f"Running {name} collection (Attempt {attempt}/2)")
 
-                # 20x, 40x imaging at x+0.25, y+0.25
-                self.current_x += 0.25
-                self.current_y += 0.25
-                self.move_x_axis(self.current_x)
-                self.move_y_axis(self.current_y - self.slide_y_offset)
-                self.check_stop()
+                        # Run the collection (with or without argument)
+                        if arg is not None:
+                            collect_func(arg)
+                        else:
+                            collect_func()
 
-                self.collect_data_with_20x_40x(2)
-                self.initiate_transfer_queue(self.focus_view, self.obj)
-
-                self.collect_data_with_20x_40x(3)
-                self.initiate_transfer_queue(self.focus_view, self.obj)
+                        self.logger("Running QC check on zstack")
+                        if self.qc_check_focus():
+                            self.logger(f"{name} QC Passed.")
+                            self.initiate_transfer_queue(self.focus_view, self.obj)
+                            passed_qc = True
+                            break # Success! Exit the retry loop and go to next stage
+                        else:
+                            self.logger(f"{name} QC Failed on attempt {attempt}.")
+                            self.handle_failed_qc()
+                            if attempt == 1:
+                                self.logger(f"Retrying {name} collection...")
+                            else:
+                                self.logger(f"{name} failed twice. Moving to next objective/step.")
+                                self.initiate_transfer_queue(self.focus_view, self.obj)
 
         self.logger("Data collection finished. All images have been taken and saved to Images folder")
         mark_slide_done(self.filename.barcode)
