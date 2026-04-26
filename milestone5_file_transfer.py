@@ -162,17 +162,17 @@ class FileTransfer5:
         elif milestone_prefix == "M2":
             rsync_path = f"/Volumes/{c.EXTERNAL_SSD}/Milestone_2/Data_Collection_6"
         elif milestone_prefix == "M3":
-            rsync_path = f"/Volumes/{c.EXTERNAL_SSD}/Milestone_3/Data_Collection_7"
+            rsync_path = f"/Volumes/{c.EXTERNAL_SSD}/Milestone_3/Data_Collection_8"
         elif milestone_prefix == "M7":
             rsync_path = f"/Volumes/{c.EXTERNAL_SSD}/Milestone_7/Data_Collection_3"
         elif milestone_prefix == "M8":
             rsync_path = f"/Volumes/{c.EXTERNAL_SSD}/Milestone_8/Data_Collection_1"
         elif milestone_prefix == "ID":
-            rsync_path = f"/Volumes/{c.EXTERNAL_SSD}/ID/Data_Collection_4"
+            rsync_path = f"/Volumes/{c.EXTERNAL_SSD}/ID/Data_Collection_5"
         elif milestone_prefix == "WBC":
             rsync_path = f"/Volumes/{c.EXTERNAL_SSD}/WBC/Data_Collection_1"
         else: # Milestone 5 and RA condition
-            rsync_path = f"/Volumes/{c.EXTERNAL_SSD}/Milestone_5/Data_Collection_10"
+            rsync_path = f"/Volumes/{c.EXTERNAL_SSD}/Milestone_5/Data_Collection_11"
 
         if milestone_prefix not in self.milestone_list:
             self.milestone_list.append(milestone_prefix)
@@ -436,5 +436,5 @@ if __name__ == "__main__":
     #rsync_remote = c.RSYNC_REMOTE
     #file.upload_to_laptop_rsync("M5RCT6", rsync_remote, True)
 
-    path = f"/Volumes/{c.EXTERNAL_SSD}/Milestone_8/no-slide"
-    file.upload_to_laptop_rsync("no-slide_20260422_M1", path, False)
+    path = f"/Volumes/{c.EXTERNAL_SSD}/Milestone_8/no-light"
+    file.upload_to_laptop_rsync("no-light_20260423_M1", path, False)
