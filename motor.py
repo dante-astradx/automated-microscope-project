@@ -877,7 +877,8 @@ class Motor:
                         update_scoreboard(fov=self.focus_view, status="imaging")
 
                         # code logic for implementation with the focus check QC
-                        stages = [(self.collect_data_with_10x, "10x", None), (self.collect_data_with_20x_40x, "20x", 2), (self.collect_data_with_20x_40x, "40x", 3)]
+                        #stages = [(self.collect_data_with_10x, "10x", None), (self.collect_data_with_20x_40x, "20x", 2), (self.collect_data_with_20x_40x, "40x", 3)]
+                        stages = [(self.collect_data_with_20x_40x, "40x", 3)]
                         for collect_func, name, arg in stages:
                             passed_qc = False
 
@@ -1033,6 +1034,43 @@ class Motor:
         time.sleep(5)
         self.move_carousel("1")
 
+    def registration_test(self):
+        self.logger("registration_test: Starting 40x zstack at current position")
+        #self.start_imaging()
+
+        self.set_smear_id("SM1")
+
+        if self.current_x is None:
+            self.current_x = 141.5
+        if self.current_y is None:
+            self.current_y = 18.0
+
+        self.home_carousel()
+        self.move_carousel("3")
+
+        self.logger("registration_test: Running coarse z-scan to locate focus plane")
+        coarse_z_focus, coarse_max_score, coarse_scores = self.focus_scan(10, 600, 20)
+        _, max_score_coarse = max(coarse_scores, key=lambda x: x[1])
+        _, min_score_coarse = min(coarse_scores, key=lambda x: x[1])
+        if (max_score_coarse - min_score_coarse) > 5.0:
+            self.focus_preset_40x = coarse_z_focus - 60
+        else:
+            self.focus_preset_40x = coarse_z_focus - 40
+        self.logger(f"registration_test: Coarse focus at z={coarse_z_focus} µm. Setting 40x preset to {self.focus_preset_40x}")
+
+        for stack_index in range(1, 3):
+            self.focus_view = stack_index
+            self.logger(f"registration_test: Starting zstack {stack_index}/2 with focus_view={self.focus_view}")
+
+            z_focus, max_score, focus_scores = self.scan_z_axis_for_focus(take_image=True)
+            self.logger(f"registration_test: Focus found at z={z_focus} µm, score={max_score:.2f}")
+
+            self.complete_zstack(focus_scores)
+            self.logger(f"registration_test: Completed zstack {stack_index}/2")
+
+        #self.stop_imaging()
+        self.logger("registration_test: Complete")
+
     def smear_analysis_test(self, smear_list):
         self.start_imaging()
         self.move_carousel("1")
@@ -1143,7 +1181,7 @@ if __name__ == "__main__":
 
     # --- Basic Motor Control Test ---
     motor.home_axis("X, Y")
-    motor.move_x_axis(137.5)
-    motor.move_y_axis(14)
+    motor.move_x_axis(142)
+    motor.move_y_axis(18)
     #motor.move_z_axis(200)
-
+    motor.move_carousel("3")

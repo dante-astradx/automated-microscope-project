@@ -30,7 +30,8 @@ def generate_barcode_folders(barcode: str, smear_list, fovs, run_date=None):
 
     # Step 4: Subfolders for SM1–SM3 and objectives 10,20,40 and fovs (1, 2, 3, ect...)
     smear_ids = smear_list
-    objectives = [10, 20, 40]
+    #objectives = [10, 20, 40]
+    objectives = [40]
 
     for smear_id, fov_count in zip(smear_ids, fovs):
         for obj in objectives:

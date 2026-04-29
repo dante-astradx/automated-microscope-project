@@ -151,6 +151,7 @@ def start():
                     update_status(f"Imaging barcode {slide['barcode']} & imaging coordinates: {coords}")
                     motor_instance.collect_data_milestone5_xy(smear_ids, coords)
                     #motor_instance.wbc_imaging_xy(smear_ids, coords)
+                    #motor_instance.registration_test()
 
                 elif imaging_mode == "Search_Algorithm":
                     desired_fov = 5
