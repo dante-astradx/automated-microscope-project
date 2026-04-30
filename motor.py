@@ -693,17 +693,16 @@ class Motor:
 
         current_center_y = c.SLIDE_1_CENTER_Y
         self.move_y_axis(current_center_y)
-        #self.move_y_axis(14)
 
         self.move_carousel("1")
 
         for smear_id in smear_list:
             if smear_id == "SM1":
-                self.move_x_axis(145)
+                self.move_x_axis(c.SLIDE_1_SM1_CENTER_X)
             elif smear_id == "SM2":
-                self.move_x_axis(128)
+                self.move_x_axis(c.SLIDE_1_SM2_CENTER_X)
             elif smear_id == "SM3":
-                self.move_x_axis(112)
+                self.move_x_axis(c.SLIDE_1_SM3_CENTER_X)
             else:
                 self.logger("Smear ID can't be identified. ERROR")
 
@@ -1181,7 +1180,7 @@ if __name__ == "__main__":
 
     # --- Basic Motor Control Test ---
     motor.home_axis("X, Y")
-    motor.move_x_axis(142)
-    motor.move_y_axis(18)
+    motor.move_x_axis(c.SLIDE_1_SM3_CENTER_X)
+    motor.move_y_axis(c.SLIDE_1_CENTER_Y)
     #motor.move_z_axis(200)
-    motor.move_carousel("3")
+    #motor.move_carousel("3")
