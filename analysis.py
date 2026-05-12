@@ -184,6 +184,8 @@ def check_focus(folder_path, x_coord, y_coord, nolight_path, noslide_path):
         if img_stdev < 5.0:
             print(f"QC Fail: {os.path.basename(file_path)} stdev ({img_stdev:.2f}) < 5.0")
             return False
+        else: 
+            print(f"Image: {os.path.basename(file_path)}, stdev: {img_stdev:.2f}")
 
     # QC Check 2: The 'Focus Peak' Check
     # If the standard deviation of the standard deviations is low, 
@@ -192,7 +194,7 @@ def check_focus(folder_path, x_coord, y_coord, nolight_path, noslide_path):
         return False
 
     zstdev_stdev = np.std(zstack_stdevs)
-    if zstdev_stdev < 0.1:
+    if zstdev_stdev < 1.0:
         print(f"QC Fail: Stack variation ({zstdev_stdev:.4f}) < 1. No focal peak detected.")
         return False
 
@@ -268,16 +270,18 @@ if __name__ == "__main__":
     pass
     imager = Camera()
 
-    back_path = "/home/microscope_auto/Images/no-slide_20260407_M2/no-slide_20260407_M2_40x/no-slide_20260407_M2_40x.tif"
-    dark_path = "/home/microscope_auto/Images/no-light_20260407_M2/no-light_20260407_M2_40x/no-light_20260407_M2_40x.tif"
+    date_slide = "20260508_M2"
 
+    back_path = f"/home/microscope_auto/Images/qc_check_test/no-slide_{date_slide}/no-slide_{date_slide}_40x/no-slide_{date_slide}_40x.tif"
+    dark_path = f"/home/microscope_auto/Images/qc_check_test/no-light_{date_slide}/no-light_{date_slide}_40x/no-light_{date_slide}_40x.tif"
+    
     #filename = "scanning_M5I2UQ_20251107_M1_140x_15y"
     #filename = "scanning_M5I2UQ_20251121_M1_SM2_131x_17y_406z"
     #imager.take_rpi_image(100, filename)
     #time.sleep(15)
 
-    impath = f"{c.PI_IMAGE_DIR}/2026-04-08 04:55:50.525525_IDIXXX_20260407_M2_unstained_SM1_20x_1_FAILED_QC"
-    result = check_focus(impath, 149.0, 42.0, dark_path, back_path)
+    impath = f"{c.PI_IMAGE_DIR}/qc_check_test/ID52KX_20260508_M2_unstained_SM2_40x_5_FAILED_QC"
+    result = check_focus(impath, 128.0, 11.5, dark_path, back_path)
     if result:
         print("WE PASSED")
     else:

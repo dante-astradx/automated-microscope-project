@@ -1180,7 +1180,9 @@ if __name__ == "__main__":
 
     # --- Basic Motor Control Test ---
     motor.home_axis("X, Y")
-    motor.move_x_axis(c.SLIDE_1_SM3_CENTER_X)
-    motor.move_y_axis(c.SLIDE_1_CENTER_Y)
+    #motor.move_x_axis(c.SLIDE_1_SM3_CENTER_X)
+    #motor.move_y_axis(c.SLIDE_1_CENTER_Y)
+    motor.move_x_axis(137)
+    motor.move_y_axis(13.5)
     #motor.move_z_axis(200)
     #motor.move_carousel("3")

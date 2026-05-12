@@ -154,7 +154,7 @@ def start():
                     #motor_instance.registration_test()
 
                 elif imaging_mode == "Search_Algorithm":
-                    desired_fov = 5
+                    desired_fov = 6
                     fovs = [desired_fov for _ in slide["smears"]]
 
                     generate_barcode_folders(slide["barcode"], slide["smears"], fovs, run_date=run_start_date)
