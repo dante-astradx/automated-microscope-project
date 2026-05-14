@@ -166,7 +166,7 @@ class FileTransfer5:
         elif milestone_prefix == "M7":
             rsync_path = f"/Volumes/{c.EXTERNAL_SSD}/Milestone_7/Data_Collection_3"
         elif milestone_prefix == "M8":
-            rsync_path = f"/Volumes/{c.EXTERNAL_SSD}/Milestone_8/Data_Collection_1"
+            rsync_path = f"/Volumes/{c.EXTERNAL_SSD}/Milestone_8/Data_Collection_2"
         elif milestone_prefix == "ID":
             rsync_path = f"/Volumes/{c.EXTERNAL_SSD}/ID/Data_Collection_5"
         elif milestone_prefix == "WBC":

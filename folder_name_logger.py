@@ -87,36 +87,30 @@ def parse_coord(cell_value):
 
     coords = []
 
+    def parse_number(num_str):
+        # Accept both dot and comma decimal separators (e.g., "13.5" or "13,5").
+        val = float(num_str.strip().replace(",", "."))
+        if val.is_integer():
+            return int(val)
+        return val
+
     try:
-        # Case 1: multiple coordinates like "(110, 15), (120, 10)"
+        # Case 1: one or more tuple coordinates like "(110, 15), (120, 10)"
         if "(" in cell_value and ")" in cell_value:
-            matches = re.findall(r"\(([^)]+)\)", cell_value)
-
-            for match in matches:
-                x_str, y_str = match.split(",")
-
-                x_val = float(x_str.strip())
-                y_val = float(y_str.strip())
-
-                if x_val.is_integer():
-                    x_val = int(x_val)
-                if y_val.is_integer():
-                    y_val = int(y_val)
-
+            tuple_matches = re.findall(
+                r"\(\s*([-+]?\d+(?:[.,]\d+)?)\s*,\s*([-+]?\d+(?:[.,]\d+)?)\s*\)",
+                cell_value,
+            )
+            for x_str, y_str in tuple_matches:
+                x_val = parse_number(x_str)
+                y_val = parse_number(y_str)
                 coords.append([(x_val + c.X_OFFSET), (y_val + c.Y_OFFSET)])
 
-        # Case 2: single coordinate like "110, 15"
+        # Case 2: single coordinate like "110, 15" (also supports "110, 13,5")
         else:
-            x_str, y_str = cell_value.split(",")
-
-            x_val = float(x_str.strip())
-            y_val = float(y_str.strip())
-
-            if x_val.is_integer():
-                x_val = int(x_val)
-            if y_val.is_integer():
-                y_val = int(y_val)
-
+            x_str, y_str = cell_value.split(",", 1)
+            x_val = parse_number(x_str)
+            y_val = parse_number(y_str)
             coords.append([(x_val + c.X_OFFSET), (y_val + c.Y_OFFSET)])
 
         return coords if coords else None
@@ -171,24 +165,19 @@ def csv_lookup(barcode, selected_smears):
     found_barcode = False
     # Normalize selected smears → {1, 3} etc
     selected_smear_numbers = {
-        int(sm.replace("SM", "")) for sm in selected_smears
+        int(re.sub(r"\D", "", sm)) for sm in selected_smears if re.search(r"\d+", sm)
     }
     # --- Scan rows ---
     for row in rows[1:]:
         if len(row) <= max(col_barcode, col_smear_number, col_coordinate):
             continue
-        row_barcode = row[col_barcode]
-        # Haven't found barcode yet
-        if not found_barcode:
-            if row_barcode != barcode:
-                continue
-            found_barcode = True
-        # Barcode block ended
-        elif row_barcode != barcode:
-            break
+        row_barcode = row[col_barcode].strip()
+        if row_barcode != barcode:
+            continue
+        found_barcode = True
         # --- Parse smear number ---
         try:
-            smear_no = int(row[col_smear_number])
+            smear_no = int(re.sub(r"\D", "", row[col_smear_number]))
         except ValueError:
             continue
         # Skip smears we don't want
@@ -200,6 +189,9 @@ def csv_lookup(barcode, selected_smears):
         smear_ids.append(f"SM{smear_no}")
         coords.append(coord)
 
+    if not found_barcode:
+        raise Exception(f"Barcode {barcode} not found in spreadsheet.")
+
     if not smear_ids:
         raise Exception(
             f"Barcode {barcode} found, but no selected smear coordinates were populated."
@@ -209,10 +201,10 @@ def csv_lookup(barcode, selected_smears):
 
 if __name__ == "__main__":
     pass
-    clear_log()
+    #clear_log()
     #clear_last_entry()
     #s = extract_prefix("WBCWWWW")
     #print(s)
-    #smear_id, coords = csv_lookup("M8AAAA", ["SM1", "SM2", "SM3"])
-    #print(smear_id)
-    #print(coords)
+    smear_id, coords = csv_lookup("IDXB6E", ["SM1", "SM2", "SM3"])
+    print(smear_id)
+    print(coords)

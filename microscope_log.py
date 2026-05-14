@@ -12,12 +12,24 @@ _file_queue = queue.Queue()       # thread-safe queue for file writes
 _status_message = None
 _stop_event = threading.Event()   # signal for stopping writer thread
 _scoreboard_lock = threading.Lock()
+_transfer_lock = threading.Lock()
 _UNSET = object()
 _scoreboard_state = {
     "barcode": None,
     "smear": None,
     "fov": None,
     "status": "idle",
+    "updated_at": None,
+}
+_transfer_state = {
+    "barcode": None,
+    "status": "idle",
+    "queue_size": 0,
+    "current_folder": None,
+    "final_folder": None,
+    "last_error": None,
+    "final_upload_complete": False,
+    "completed_at": None,
     "updated_at": None,
 }
 
@@ -124,6 +136,54 @@ def reset_scoreboard():
         _scoreboard_state["fov"] = None
         _scoreboard_state["status"] = "idle"
         _scoreboard_state["updated_at"] = _utc_now_iso()
+
+def get_transfer_state():
+    """Return a snapshot of folder transfer state for API responses."""
+    with _transfer_lock:
+        return dict(_transfer_state)
+
+def update_transfer_state(
+    barcode=_UNSET,
+    status=_UNSET,
+    queue_size=_UNSET,
+    current_folder=_UNSET,
+    final_folder=_UNSET,
+    last_error=_UNSET,
+    final_upload_complete=_UNSET,
+    completed_at=_UNSET,
+):
+    """Update one or more transfer-state fields; pass None explicitly to clear a field."""
+    with _transfer_lock:
+        if barcode is not _UNSET:
+            _transfer_state["barcode"] = barcode
+        if status is not _UNSET:
+            _transfer_state["status"] = status
+        if queue_size is not _UNSET:
+            _transfer_state["queue_size"] = queue_size
+        if current_folder is not _UNSET:
+            _transfer_state["current_folder"] = current_folder
+        if final_folder is not _UNSET:
+            _transfer_state["final_folder"] = final_folder
+        if last_error is not _UNSET:
+            _transfer_state["last_error"] = last_error
+        if final_upload_complete is not _UNSET:
+            _transfer_state["final_upload_complete"] = final_upload_complete
+        if completed_at is not _UNSET:
+            _transfer_state["completed_at"] = completed_at
+        _transfer_state["updated_at"] = _utc_now_iso()
+
+def reset_transfer_state():
+    """Reset transfer state to idle defaults; called when a new run starts."""
+    with _transfer_lock:
+        _transfer_state["barcode"] = None
+        _transfer_state["status"] = "idle"
+        _transfer_state["queue_size"] = 0
+        _transfer_state["current_folder"] = None
+        _transfer_state["final_folder"] = None
+        _transfer_state["last_error"] = None
+        _transfer_state["final_upload_complete"] = False
+        _transfer_state["completed_at"] = None
+        _transfer_state["updated_at"] = _utc_now_iso()
 
 # --- Redirect stdout/stderr to log file ---
 class StdoutLogger:

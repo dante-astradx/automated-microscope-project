@@ -2,13 +2,24 @@ import threading
 import queue
 import time
 import os
+from datetime import datetime
 from milestone5_file_transfer import FileTransfer5
-from microscope_log import log_output
+from microscope_log import log_output, update_transfer_state
 from config import PI_IMAGE_DIR
 
 _transfer_queue = queue.Queue()
 _worker = None
 _done_slides = set()
+
+
+def _folder_name(path):
+    if not path:
+        return None
+    return os.path.basename(os.path.normpath(path))
+
+
+def _now_iso():
+    return datetime.utcnow().isoformat(timespec="seconds")
 
 
 class TransferWorker(threading.Thread):
@@ -30,6 +41,14 @@ class TransferWorker(threading.Thread):
             # Handle final slide upload task
             if folder_path == "final":
                 try:
+                    update_transfer_state(
+                        barcode=barcode,
+                        status="finalizing",
+                        queue_size=_transfer_queue.qsize(),
+                        current_folder=None,
+                        final_folder=barcode,
+                        last_error=None,
+                    )
                     file_transfer = FileTransfer5(logger=log_output)
                     file_transfer.set_barcode(barcode)
                     remote_path = file_transfer.get_rsync_path(file_transfer.extract_prefix(barcode))
@@ -38,20 +57,57 @@ class TransferWorker(threading.Thread):
                     if success:
                         _done_slides.discard(barcode)  # Remove from done set after successful final upload
                         log_output(f"TransferWorker: final upload successful for {barcode}")
+                        update_transfer_state(
+                            barcode=barcode,
+                            status="complete",
+                            queue_size=_transfer_queue.qsize(),
+                            current_folder=None,
+                            final_folder=barcode,
+                            last_error=None,
+                            final_upload_complete=True,
+                            completed_at=_now_iso(),
+                        )
                     else:
                         log_output(f"TransferWorker: final upload failed for {barcode}, will retry later")
+                        update_transfer_state(
+                            barcode=barcode,
+                            status="failed",
+                            queue_size=_transfer_queue.qsize(),
+                            final_folder=barcode,
+                            last_error=f"Final upload failed for {barcode}; retry scheduled.",
+                            final_upload_complete=False,
+                        )
                         # Re-enqueue the final task after a delay
                         time.sleep(60)  # Wait 1 minute before retry
                         _transfer_queue.put(("final", barcode))
+                        update_transfer_state(status="queued", queue_size=_transfer_queue.qsize())
                 except Exception as e:
                     log_output(f"TransferWorker: error in final upload for {barcode}: {e}")
+                    update_transfer_state(
+                        barcode=barcode,
+                        status="failed",
+                        queue_size=_transfer_queue.qsize(),
+                        final_folder=barcode,
+                        last_error=str(e),
+                        final_upload_complete=False,
+                    )
                 finally:
                     _transfer_queue.task_done()
+                    update_transfer_state(queue_size=_transfer_queue.qsize())
                 continue
 
             if not folder_path or not os.path.exists(folder_path):
                 log_output(f"TransferWorker: folder path missing or removed: {folder_path}")
+                update_transfer_state(
+                    barcode=barcode,
+                    status="failed",
+                    queue_size=_transfer_queue.qsize(),
+                    current_folder=_folder_name(folder_path),
+                    last_error=f"Missing folder path: {folder_path}",
+                    final_upload_complete=False,
+                )
                 _transfer_queue.task_done()
+                update_transfer_state(queue_size=_transfer_queue.qsize())
                 continue
 
             try:
@@ -61,7 +117,16 @@ class TransferWorker(threading.Thread):
                 # Ensure folder_path is a directory and potentially add a marker check
                 if not os.path.isdir(folder_path):
                     log_output(f"TransferWorker: not a directory: {folder_path}")
+                    update_transfer_state(
+                        barcode=barcode,
+                        status="failed",
+                        queue_size=_transfer_queue.qsize(),
+                        current_folder=_folder_name(folder_path),
+                        last_error=f"Not a directory: {folder_path}",
+                        final_upload_complete=False,
+                    )
                     _transfer_queue.task_done()
+                    update_transfer_state(queue_size=_transfer_queue.qsize())
                     continue
 
                 # Build a relative path from PI_IMAGE_DIR to use with upload_to_laptop_rsync.
@@ -71,6 +136,13 @@ class TransferWorker(threading.Thread):
                 remote_path_suffix = os.path.dirname(relative_folder_path)
                 remote_path = os.path.join(remote_path_prefix, remote_path_suffix)
 
+                update_transfer_state(
+                    barcode=barcode,
+                    status="transferring",
+                    queue_size=_transfer_queue.qsize(),
+                    current_folder=_folder_name(relative_folder_path),
+                    last_error=None,
+                )
                 log_output(f"TransferWorker: uploading {relative_folder_path} to {remote_path}")
 
                 # Use upload_to_laptop_rsync and cleanup later as desired.
@@ -80,6 +152,14 @@ class TransferWorker(threading.Thread):
 
             except Exception as e:
                 log_output(f"TransferWorker: error transferring {folder_path}: {e}")
+                update_transfer_state(
+                    barcode=barcode,
+                    status="failed",
+                    queue_size=_transfer_queue.qsize(),
+                    current_folder=_folder_name(folder_path),
+                    last_error=str(e),
+                    final_upload_complete=False,
+                )
 
             finally:
                 _transfer_queue.task_done()
@@ -88,6 +168,14 @@ class TransferWorker(threading.Thread):
                 if _transfer_queue.empty() and barcode in _done_slides:
                     log_output(f"TransferWorker: all tasks done for {barcode}, enqueuing final upload")
                     _transfer_queue.put(("final", barcode))
+                    update_transfer_state(
+                        barcode=barcode,
+                        status="queued",
+                        queue_size=_transfer_queue.qsize(),
+                        final_folder=barcode,
+                    )
+
+                update_transfer_state(queue_size=_transfer_queue.qsize())
 
         log_output("TransferWorker: stopped")
 
@@ -129,6 +217,12 @@ def enqueue_folder(folder_path, barcode):
 
     log_output(f"enqueue_folder: queued {folder_path} for barcode {barcode}")
     _transfer_queue.put((folder_path, barcode))
+    update_transfer_state(
+        barcode=barcode,
+        status="queued",
+        queue_size=_transfer_queue.qsize(),
+        current_folder=_folder_name(folder_path),
+    )
 
 
 def mark_slide_done(barcode):
@@ -141,6 +235,12 @@ def mark_slide_done(barcode):
         if _transfer_queue.empty():
             log_output(f"mark_slide_done: queue is empty after marking {barcode}, enqueuing final upload")
             _transfer_queue.put(("final", barcode))
+            update_transfer_state(
+                barcode=barcode,
+                status="queued",
+                queue_size=_transfer_queue.qsize(),
+                final_folder=barcode,
+            )
 
 
 def queue_size():

@@ -8,6 +8,8 @@ from microscope_log import (
     get_scoreboard_state,
     update_scoreboard,
     reset_scoreboard,
+    get_transfer_state,
+    reset_transfer_state,
 )
 from folder_generator import generate_barcode_folders, generate_background_folders, generate_darkfield_folders, delete_barcode_folders, check_pre_imaging
 from light_controller import toggle_light
@@ -43,6 +45,11 @@ def status():
 def scoreboard():
     """AJAX endpoint to fetch structured imaging progress for the GUI scoreboard."""
     return jsonify(get_scoreboard_state())
+
+@app.route("/transfer_status", methods=["GET"])
+def transfer_status():
+    """AJAX endpoint to fetch structured folder transfer status for the GUI card."""
+    return jsonify(get_transfer_state())
 
 @app.route("/stream")
 def stream():
@@ -118,6 +125,9 @@ def start():
 
     for slides in slides_to_run:
         flash(f"Imaging {slides['barcode']} \n")
+
+    # New run starts with a fresh transfer card state.
+    reset_transfer_state()
 
     # define actual imaging data task
     def data_task():

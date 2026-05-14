@@ -45,6 +45,36 @@
             font-weight: 700;
             color: #1f2937;
         }
+        .score-value-wrap {
+            font-size: 14px;
+            font-weight: 600;
+            color: #1f2937;
+            word-break: break-word;
+        }
+        .status-pill {
+            border-radius: 999px;
+            padding: 2px 10px;
+            display: inline-block;
+            font-size: 14px;
+            font-weight: 700;
+            border: 1px solid transparent;
+            text-transform: lowercase;
+        }
+        .status-pill-complete {
+            background: #d1fae5;
+            color: #065f46;
+            border-color: #a7f3d0;
+        }
+        .status-pill-failed {
+            background: #fee2e2;
+            color: #991b1b;
+            border-color: #fecaca;
+        }
+        .status-pill-active {
+            background: #e0f2fe;
+            color: #0c4a6e;
+            border-color: #bae6fd;
+        }
         #terminal-output { 
             margin-top: 20px; 
             padding: 10px; 
@@ -120,6 +150,39 @@
         }
         setInterval(fetchScoreboard, 1500);
 
+        function setTransferStatusPill(statusValue) {
+            const statusEl = document.getElementById('transfer-status');
+            statusEl.className = 'score-value status-pill';
+
+            const normalized = (statusValue || '').toLowerCase();
+            if (normalized === 'complete') {
+                statusEl.classList.add('status-pill-complete');
+            } else if (normalized === 'failed') {
+                statusEl.classList.add('status-pill-failed');
+            } else if (normalized === 'queued' || normalized === 'transferring' || normalized === 'finalizing') {
+                statusEl.classList.add('status-pill-active');
+            }
+        }
+
+        function fetchTransferStatus() {
+            fetch('/transfer_status')
+            .then(response => response.json())
+            .then(data => {
+                document.getElementById('transfer-barcode').textContent = renderScoreValue(data.barcode);
+                document.getElementById('transfer-status').textContent = renderScoreValue(data.status);
+                document.getElementById('transfer-queue').textContent = renderScoreValue(data.queue_size);
+                document.getElementById('transfer-current-folder').textContent = renderScoreValue(data.current_folder);
+                document.getElementById('transfer-final-folder').textContent = renderScoreValue(data.final_folder);
+                document.getElementById('transfer-completed-at').textContent = renderScoreValue(data.completed_at);
+                document.getElementById('transfer-last-error').textContent = renderScoreValue(data.last_error);
+                setTransferStatusPill(data.status);
+            })
+            .catch(err => {
+                console.error('Transfer status polling error:', err);
+            });
+        }
+        setInterval(fetchTransferStatus, 1500);
+
         // SSE: stream terminal output into terminal-output div
         window.onload = function() {
             const outputDiv = document.getElementById("terminal-output");
@@ -131,6 +194,7 @@
 
             pollStatus();
             fetchScoreboard();
+            fetchTransferStatus();
 
             // Auto-refresh the latest image every 15 seconds
             const img = document.getElementById("latestImage");
@@ -253,6 +317,40 @@
             <div class="score-item">
                 <div class="score-label">Run Status</div>
                 <div class="score-value" id="scoreboard-status">idle</div>
+            </div>
+        </div>
+    </div>
+
+    <div class="scoreboard">
+        <h2>Folder Transfer Status</h2>
+        <div class="scoreboard-grid">
+            <div class="score-item">
+                <div class="score-label">Barcode</div>
+                <div class="score-value" id="transfer-barcode">--</div>
+            </div>
+            <div class="score-item">
+                <div class="score-label">Transfer Status</div>
+                <div class="score-value status-pill" id="transfer-status">idle</div>
+            </div>
+            <div class="score-item">
+                <div class="score-label">Queue Size (Total)</div>
+                <div class="score-value" id="transfer-queue">0</div>
+            </div>
+            <div class="score-item">
+                <div class="score-label">Current Folder</div>
+                <div class="score-value-wrap" id="transfer-current-folder">--</div>
+            </div>
+            <div class="score-item">
+                <div class="score-label">Final Folder</div>
+                <div class="score-value-wrap" id="transfer-final-folder">--</div>
+            </div>
+            <div class="score-item">
+                <div class="score-label">Completed At</div>
+                <div class="score-value-wrap" id="transfer-completed-at">--</div>
+            </div>
+            <div class="score-item">
+                <div class="score-label">Last Error</div>
+                <div class="score-value-wrap" id="transfer-last-error">--</div>
             </div>
         </div>
     </div>
