@@ -194,8 +194,8 @@ def check_focus(folder_path, x_coord, y_coord, nolight_path, noslide_path):
         return False
 
     zstdev_stdev = np.std(zstack_stdevs)
-    if zstdev_stdev < 1.0:
-        print(f"QC Fail: Stack variation ({zstdev_stdev:.4f}) < 1. No focal peak detected.")
+    if zstdev_stdev < 5.0:
+        print(f"QC Fail: Stack variation ({zstdev_stdev:.4f}) < 5. No focal peak detected.")
         return False
 
     print(f"QC Pass: Found {len(zstack_files)} images. Peak variance: {zstdev_stdev:.2f}")
@@ -270,7 +270,7 @@ if __name__ == "__main__":
     pass
     imager = Camera()
 
-    date_slide = "20260508_M2"
+    date_slide = "20260513_M2"
 
     back_path = f"/home/microscope_auto/Images/qc_check_test/no-slide_{date_slide}/no-slide_{date_slide}_40x/no-slide_{date_slide}_40x.tif"
     dark_path = f"/home/microscope_auto/Images/qc_check_test/no-light_{date_slide}/no-light_{date_slide}_40x/no-light_{date_slide}_40x.tif"
@@ -280,8 +280,8 @@ if __name__ == "__main__":
     #imager.take_rpi_image(100, filename)
     #time.sleep(15)
 
-    impath = f"{c.PI_IMAGE_DIR}/qc_check_test/ID52KX_20260508_M2_unstained_SM2_40x_5_FAILED_QC"
-    result = check_focus(impath, 128.0, 11.5, dark_path, back_path)
+    impath = f"{c.PI_IMAGE_DIR}/qc_check_test/IDKSRK_20260513_M2_unstained_SM2_40x_2_FAILED_QC"
+    result = check_focus(impath, 127.5, 16.5, dark_path, back_path)
     if result:
         print("WE PASSED")
     else:
