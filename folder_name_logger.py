@@ -205,6 +205,6 @@ if __name__ == "__main__":
     #clear_last_entry()
     #s = extract_prefix("WBCWWWW")
     #print(s)
-    smear_id, coords = csv_lookup("IDXB6E", ["SM1", "SM2", "SM3"])
+    smear_id, coords = csv_lookup("RAMKKK", ["SM1", "SM2", "SM3"])
     print(smear_id)
     print(coords)

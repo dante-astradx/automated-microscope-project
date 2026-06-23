@@ -1145,6 +1145,79 @@ class Motor:
 
         self.stop_imaging()
 
+    def whole_slide_scan_40x(self, smear_list, fov_list):
+        self.start_imaging()
+        for i in range(len(smear_list)):
+            smear_id = smear_list[i]
+            self.set_smear_id(smear_id)
+            fov_target = fov_list[i]
+
+            self.first_scan_for_focus_preset([smear_id])
+
+            center_x, center_y = self.get_smear_center(smear_id)
+            
+            # create new coordiante list here 
+            search_coords = self.generate_spiral(center_x, center_y, fov_target, 2)
+            
+            self.focus_view = 0
+            for j in range(len(search_coords)):
+                x_pos = search_coords[j][0]
+                y_pos = search_coords[j][1]
+
+                self.logger(f"Collecting data at {x_pos}, {y_pos + self.slide_y_offset} in {smear_id}")
+
+                self.check_stop()
+                self.focus_view += 1
+                update_scoreboard(fov=self.focus_view, status="imaging")
+
+                # to save some time we will not home in-between each fov 
+                #self.home_axis("X, Y")                
+                self.move_x_axis(x_pos)
+                self.move_y_axis(y_pos)
+                self.check_stop()
+
+                # code logic for implementation with the focus check QC
+                stages = [(self.collect_data_with_20x_40x, "40x", 3)]
+                for collect_func, name, arg in stages:
+                    passed_qc = False
+
+                    # Try up to 2 times
+                    for attempt in range(1, 3):
+                        self.logger(f"Running {name} collection (Attempt {attempt}/2)")
+
+                        # Run the collection (with or without argument)
+                        if arg is not None:
+                            collect_func(arg)
+                        else:
+                            collect_func()
+
+                        self.logger("Running QC check on zstack")
+                        if self.qc_check_focus():
+                            self.logger(f"{name} QC Passed.")
+                            self.initiate_transfer_queue(self.focus_view, self.obj)
+                            passed_qc = True
+                            break # Success! Exit the retry loop and go to next stage
+                        else:
+                            self.logger(f"{name} QC Failed on attempt {attempt}.")
+                            self.handle_failed_qc()
+                            if attempt == 1:
+                                self.logger(f"Retrying {name} collection...")
+                            else:
+                                self.logger(f"{name} failed twice. Moving to next objective/step.")
+                                self.initiate_transfer_queue(self.focus_view, self.obj)
+
+        self.logger("Data collection finished. All images have been taken and saved to Images folder")
+        mark_slide_done(self.filename.barcode)
+        self.stop_imaging()
+
+        # move x-y axis to position that allows for easier removal of slides only if 2nd slide was imaged
+        if self.slide_y_offset == 25: # this is how we determine if 2nd slide was being imaged
+            self.move_x_axis(130)
+            self.move_y_axis(15)
+        else:
+            pass
+
+
 if __name__ == "__main__":
     pass
     file = FileTransfer5()
@@ -1179,10 +1252,13 @@ if __name__ == "__main__":
     #motor.move_carousel("2")
 
     # --- Basic Motor Control Test ---
-    motor.home_axis("X, Y")
+    #motor.home_axis("X, Y")
     #motor.move_x_axis(c.SLIDE_1_SM3_CENTER_X)
     #motor.move_y_axis(c.SLIDE_1_CENTER_Y)
-    motor.move_x_axis(137)
-    motor.move_y_axis(13.5)
+    #motor.move_x_axis(137)
+    #motor.move_y_axis(13.5)
     #motor.move_z_axis(200)
     #motor.move_carousel("3")
+ 
+    points = motor.generate_spiral(147, 13.5, 15, 2)
+    print(points)

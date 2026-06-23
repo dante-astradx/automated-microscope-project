@@ -164,13 +164,14 @@ def start():
                     #motor_instance.registration_test()
 
                 elif imaging_mode == "Search_Algorithm":
-                    desired_fov = 6
+                    desired_fov = 12
                     fovs = [desired_fov for _ in slide["smears"]]
 
                     generate_barcode_folders(slide["barcode"], slide["smears"], fovs, run_date=run_start_date)
 
                     update_status(f"Imaging barcode {slide['barcode']}. Searching for {desired_fov} FOV's at {slide['smears']}")
-                    motor_instance.collect_data_with_search_algorithm(slide["smears"], fovs)
+                    #motor_instance.collect_data_with_search_algorithm(slide["smears"], fovs)
+                    motor_instance.whole_slide_scan_40x(slide["smears"], fovs)
 
             update_scoreboard(barcode=None, smear=None, fov=None, status="complete")
             time.sleep(2)
