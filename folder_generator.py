@@ -4,6 +4,7 @@ import os
 from datetime import datetime
 import config as c
 import csv
+from json_handler import create_correction_json
 
 microscope_id = c.MICROSCOPE_ID
 
@@ -16,17 +17,9 @@ def generate_barcode_folders(barcode: str, smear_list, fovs, run_date=None):
     home_dir = Path(c.PI_IMAGE_DIR)
 
     # Step 1: Root barcode folder
-    root_dir = home_dir / barcode
-    root_dir.mkdir(parents=True, exist_ok=True)
-
-    # Step 2: Date subfolder
     today = run_date if run_date is not None else datetime.today().strftime("%Y%m%d")
-    date_dir = root_dir / f"{barcode}_{today}"
-    date_dir.mkdir(parents=True, exist_ok=True)
-
-    # Step 3: Microscope-specific subfolder
-    microscope_dir = date_dir / f"{barcode}_{today}_{microscope_id}"
-    microscope_dir.mkdir(parents=True, exist_ok=True)
+    root_dir = home_dir / f"{barcode}_{today}_{microscope_id}"
+    root_dir.mkdir(parents=True, exist_ok=True)
 
     # Step 4: Subfolders for SM1–SM3 and objectives 10,20,40 and fovs (1, 2, 3, ect...)
     smear_ids = smear_list
@@ -37,18 +30,18 @@ def generate_barcode_folders(barcode: str, smear_list, fovs, run_date=None):
         for obj in objectives:
             for fov in range(1, fov_count + 1):
                 folder_name = f"{barcode}_{today}_{microscope_id}_unstained_{smear_id}_{obj}x_{fov}"
-                subfolder = microscope_dir / folder_name
+                subfolder = root_dir / folder_name
                 subfolder.mkdir(parents=True, exist_ok=True)
 
-    csv_name, csv_path = create_quality_csv(barcode, microscope_dir)
+    csv_name, csv_path = create_quality_csv(barcode, root_dir)
 
-    return microscope_dir
+    return root_dir
 
 def create_quality_csv(barcode, directory):
     # 1. Verify that the target directory exists
     if not directory.is_dir():
         raise FileNotFoundError(
-            f"Microscope directory '{microscope_dir}' does not exist."
+            f"Directory '{directory}' does not exist."
         )
 
     # 2. Build the destination path
@@ -80,11 +73,7 @@ def generate_background_folders():
     root_dir = home_dir / f"no-slide_{today}_{microscope_id}"
     root_dir.mkdir(parents=True, exist_ok=True)
 
-    objectives = [10, 20, 40]
-    for obj in objectives:
-        folder_name = f"no-slide_{today}_{microscope_id}_{obj}x"
-        subfolder = root_dir / folder_name
-        subfolder.mkdir(parents=True, exist_ok=True)
+    create_correction_json("no-slide")
 
 def generate_darkfield_folders():
     home_dir = Path(c.PI_IMAGE_DIR)
@@ -93,11 +82,7 @@ def generate_darkfield_folders():
     root_dir = home_dir / f"no-light_{today}_{microscope_id}"
     root_dir.mkdir(parents=True, exist_ok=True)
 
-    objectives = [10, 20, 40]
-    for obj in objectives:
-        folder_name = f"no-light_{today}_{microscope_id}_{obj}x"
-        subfolder = root_dir / folder_name
-        subfolder.mkdir(parents=True, exist_ok=True)
+    create_correction_json("no-light")
 
 def delete_barcode_folders(barcode: str):
 
@@ -134,12 +119,12 @@ def check_pre_imaging():
 
         print(f"{folder_path} exists")
 
-        # Check each objective subfolder
+        # Check each objective correction .tif exists inside its subfolder
         for obj in objectives:
-            subfolder = folder_path / f"{folder}_{obj}"
-            print(f"subfolder is: {subfolder}")
-            if not subfolder.exists() or not any(subfolder.iterdir()):
-                print(f"{subfolder} does not exist or it's empty")
+            tif_path = folder_path / f"{folder}_{obj}.tif"
+            print(f"Checking for {tif_path}")
+            if not tif_path.exists():
+                print(f"{tif_path} does not exist")
                 return False
 
     return True
@@ -147,8 +132,13 @@ def check_pre_imaging():
 if __name__ == '__main__':
     pass
 
+    if check_pre_imaging():
+        print("Pre-imaging checks passed.")
+    else:
+        print("Pre-imaging checks failed.")
+
     # --- Test Folder Generation ---
-    generate_barcode_folders("WBCWWWW", ["SM1"], [1])
+    #generate_barcode_folders("WBCWWWW", ["SM1"], [1])
     #generate_barcode_folders("M3ABCD", ["SM1", "SM2", "SM3"])
     #generate_barcode_folders("M2ABCD", ["SM1", "SM2", "SM3"])
     #generate_barcode_folders("RA0000", ["SM1", "SM2", "SM3"])

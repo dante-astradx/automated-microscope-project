@@ -11,6 +11,7 @@ import logging
 from pathlib import Path
 from microscope_log import log_output, log_to_file_only, update_status
 from folder_name_logger import clear_log
+from json_handler import append_correction_metadata_to_manifest
 import csv
 import json
 
@@ -21,18 +22,13 @@ class FileTransfer5:
         self.date = run_date if run_date is not None else date.today().strftime("%Y%m%d")
         self.smear_id = None
 
-        self.first_folder = None
-        self.second_folder = None
-        self.third_folder = None
-        self.microscope_id = c.MICROSCOPE_ID
+        self.slide_case_folder = None
         self.csv_filename = None
 
         self.hostname = c.HOSTNAME_IP
         self.username = c.USERNAME
         self.port = c.PORT
         self.laptop_upload_dir = None
-
-        self.pi_image_dir = c.PI_IMAGE_DIR
 
         self.ssh = None
         self.sftp = None
@@ -44,10 +40,7 @@ class FileTransfer5:
     def set_barcode(self, barcode):
         self.barcode = barcode
 
-        self.first_folder = self.barcode
-        self.second_folder = f"{self.barcode}_{self.date}"
-        self.third_folder = f"{self.barcode}_{self.date}_{self.microscope_id}"
-
+        self.slide_case_folder = f"{self.barcode}_{self.date}_{c.MICROSCOPE_ID}"
         self.csv_filename = f"{barcode}_10x_quality.csv"
 
     def set_smear_id(self, smear_id):
@@ -57,10 +50,8 @@ class FileTransfer5:
     def append_csv(self, x_coord: float, y_coord: float, z_coord: float, good_fov: bool | str):
         # 1. Resolve the CSV path
         csv_path = (
-            Path(self.pi_image_dir) /
-            self.first_folder /
-            self.second_folder /
-            self.third_folder /
+            Path(c.PI_IMAGE_DIR) /
+            self.slide_case_folder /
             self.csv_filename
         )
 
@@ -74,7 +65,7 @@ class FileTransfer5:
             str(y_coord),
             str(z_coord),
             self.smear_id,
-            self.microscope_id,
+            c.MICROSCOPE_ID,
             dt,
             good_fov_str,
         ]
@@ -86,64 +77,51 @@ class FileTransfer5:
 
     # Filename generator
     def data_filename_generator(self, focus_view, obj, x_pos, y_pos, z_pos):
-        filename = f"{self.third_folder}_unstained_{self.smear_id}_{obj}x_{focus_view}_{x_pos}x_{y_pos}y_{z_pos}z"
+        filename = f"{self.slide_case_folder}_unstained_{self.smear_id}_{obj}x_{focus_view}_{x_pos}x_{y_pos}y_{z_pos}z"
         file_path = self.data_path_generator(focus_view, obj)
         return filename, file_path
 
     def background_filename_generator(self, obj):
-        filename = f"no-slide_{self.date}_{self.microscope_id}_{obj}x"
-        file_path = self.background_path_generator(obj)
+        filename = f"no-slide_{self.date}_{c.MICROSCOPE_ID}_{obj}x"
+        file_path = os.path.join(c.PI_IMAGE_DIR, f"no-slide_{self.date}_{c.MICROSCOPE_ID}")
+        self.logger(f"Background images will be saved to: {file_path}")
         return filename, file_path
 
     def darkfield_filename_generator(self, obj):
-        filename = f"no-light_{self.date}_{self.microscope_id}_{obj}x"
-        file_path = self.darkfield_path_generator(obj)
+        filename = f"no-light_{self.date}_{c.MICROSCOPE_ID}_{obj}x"
+        file_path = os.path.join(c.PI_IMAGE_DIR, f"no-light_{self.date}_{c.MICROSCOPE_ID}")
+        self.logger(f"Darkfield images will be saved to: {file_path}")
         return filename, file_path
 
     def scanning_filename_generator(self, x_pos, y_pos, z_pos):
         time = datetime.now().time()
-        filename = f"{self.barcode}_{time}_{self.date}_{self.microscope_id}_{self.smear_id}_{x_pos}x_{y_pos}y_{z_pos}z_fov_detection"
+        filename = f"{self.barcode}_{time}_{self.date}_{c.MICROSCOPE_ID}_{self.smear_id}_{x_pos}x_{y_pos}y_{z_pos}z_fov_detection"
         return filename
-
 
     # File path generator
     def data_path_generator(self, focus_view, obj):
-        data_folder = f"{self.third_folder}_unstained_{self.smear_id}_{obj}x_{focus_view}"
-        file_path = os.path.join(self.pi_image_dir, self.first_folder, self.second_folder, self.third_folder, data_folder)
+        data_folder = f"{self.slide_case_folder}_unstained_{self.smear_id}_{obj}x_{focus_view}"
+        file_path = os.path.join(c.PI_IMAGE_DIR, self.slide_case_folder, data_folder)
         self.logger(f"Image will be saved to: {file_path}")
 
         return file_path
 
     def failed_qc_path_generator(self, focus_view, obj):
-        data_folder = f"{datetime.now()}_{self.third_folder}_unstained_{self.smear_id}_{obj}x_{focus_view}_FAILED_QC"
-        file_path = os.path.join(self.pi_image_dir, self.first_folder, self.second_folder, self.third_folder, data_folder)
+        data_folder = f"{datetime.now()}_{self.slide_case_folder}_unstained_{self.smear_id}_{obj}x_{focus_view}_FAILED_QC"
+        file_path = os.path.join(c.PI_IMAGE_DIR, self.slide_case_folder, data_folder)
         self.logger(f"Creating new filepath for failed QC zstack: {file_path}")
-
-        return file_path
-
-    def background_path_generator(self, obj):
-        background_folder = f"no-slide_{self.date}_{self.microscope_id}_{obj}x"
-        file_path = os.path.join(self.pi_image_dir, f"no-slide_{self.date}_{self.microscope_id}", background_folder)
-        self.logger(f"Background image saved to: {file_path}")
-
-        return file_path
-
-    def darkfield_path_generator(self, obj):
-        darkfield_folder = f"no-light_{self.date}_{self.microscope_id}_{obj}x"
-        file_path = os.path.join(self.pi_image_dir, f"no-light_{self.date}_{self.microscope_id}", darkfield_folder)
-        self.logger(f"Darkfield image saved to: {file_path}")
 
         return file_path
 
     # Moving and finding images
     def move_scanning_images(self):
-        pi_files = os.listdir(self.pi_image_dir)
+        pi_files = os.listdir(c.PI_IMAGE_DIR)
         pattern = f"scanning_*"
         matching_files = fnmatch.filter(pi_files, pattern)
 
         for filename in matching_files:
-            source_path = os.path.join(self.pi_image_dir, filename)
-            destination_path = os.path.join(self.pi_image_dir, "scanning_image_archive", filename)
+            source_path = os.path.join(c.PI_IMAGE_DIR, filename)
+            destination_path = os.path.join(c.PI_IMAGE_DIR, "scanning_image_archive", filename)
 
             if os.path.isfile(source_path):
                 shutil.move(source_path, destination_path)
@@ -156,45 +134,17 @@ class FileTransfer5:
 
         return match.group(1) or match.group(2)
 
-    def get_rsync_path(self, milestone_prefix):
-        if milestone_prefix == "M1":
-            rsync_path = f"/Volumes/{c.EXTERNAL_SSD}/Milestone_1/Data_Collection_7"
-        elif milestone_prefix == "M2":
-            rsync_path = f"/Volumes/{c.EXTERNAL_SSD}/Milestone_2/Data_Collection_6"
-        elif milestone_prefix == "M3":
-            rsync_path = f"/Volumes/{c.EXTERNAL_SSD}/Milestone_3/Data_Collection_8"
-        elif milestone_prefix == "M7":
-            rsync_path = f"/Volumes/{c.EXTERNAL_SSD}/Milestone_7/Data_Collection_3"
-        elif milestone_prefix == "M8":
-            rsync_path = f"/Volumes/{c.EXTERNAL_SSD}/Milestone_8/Data_Collection_2"
-        elif milestone_prefix == "ID":
-            rsync_path = f"/Volumes/{c.EXTERNAL_SSD}/ID/Data_Collection_5"
-        elif milestone_prefix == "WBC":
-            rsync_path = f"/Volumes/{c.EXTERNAL_SSD}/WBC/Data_Collection_1"
-        else: # Milestone 5 and RA condition
-            rsync_path = f"/Volumes/{c.EXTERNAL_SSD}/Milestone_5/Data_Collection_11"
 
-        if milestone_prefix not in self.milestone_list:
-            self.milestone_list.append(milestone_prefix)
-            print(self.milestone_list)
-
-        return rsync_path
-
-    def get_correction_rsync_path(self, milestone_prefix, corr_type):
+    def get_correction_rsync_path(self, corr_type):
         if corr_type not in ["no-slide", "no-light"]:
             raise ValueError("corr_type must be 'no-slide' or 'no-light'")
 
-        if milestone_prefix == "RA":
-            base = f"/Volumes/{c.EXTERNAL_SSD}/Milestone_5/{corr_type}"
-        elif milestone_prefix == "ID":
-            base = f"/Volumes/{c.EXTERNAL_SSD}/ID/{corr_type}"
-        elif milestone_prefix == "WBC":
-            base = f"/Volumes/{c.EXTERNAL_SSD}/WBC/{corr_type}"
-        else:
-            milestone_number = milestone_prefix[1] if len(milestone_prefix) > 1 else "5"
-            base = f"/Volumes/{c.EXTERNAL_SSD}/Milestone_{milestone_number}/{corr_type}"
+        if corr_type == "no-slide":
+            remote_path = f"{c.REMOTE_RSYNC_PATH}/no-slide"
+        if corr_type == "no-light":
+            remote_path = f"{c.REMOTE_RSYNC_PATH}/no-light"
 
-        return base
+        return remote_path
 
     def derive_milestones_from_log(self):
         try:
@@ -220,7 +170,7 @@ class FileTransfer5:
             date = datetime.today().strftime("%Y%m%d")
 
         folders = []
-        base_path = Path(self.pi_image_dir)
+        base_path = Path(c.PI_IMAGE_DIR)
 
         for child in base_path.iterdir():
             if not child.is_dir():
@@ -241,24 +191,23 @@ class FileTransfer5:
             self.logger("No previous correction folders found to transfer.")
             return True
 
-        if not self.milestone_list:
-            self.milestone_list = self.derive_milestones_from_log()
-
         success_all = True
         for folder_name in folders:
             correction_type = "no-slide" if folder_name.startswith("no-slide_") else "no-light"
             all_success = True
 
-            for milestone in self.milestone_list:
-                rsync_path = self.get_correction_rsync_path(milestone, correction_type)
-                self.logger(f"Uploading correction folder {folder_name} to {rsync_path} (milestone {milestone})")
-                transferred = self.upload_to_laptop_rsync(folder_name, rsync_path, delete_files=False)
-                if not transferred:
-                    all_success = False
-                    self.logger(f"Failed to transfer {folder_name} to {rsync_path}")
+            rsync_path = self.get_correction_rsync_path(correction_type)
+
+            self.logger(f"Uploading correction folder {folder_name} to {rsync_path}")
+            folder_path = os.path.join(c.PI_IMAGE_DIR, folder_name)
+            transferred = self.upload_to_network(folder_path, rsync_path, delete_files=False)
+
+            if not transferred:
+                all_success = False
+                self.logger(f"Failed to transfer {folder_name} to {rsync_path}")
 
             if all_success:
-                local_folder = Path(self.pi_image_dir) / folder_name
+                local_folder = Path(c.PI_IMAGE_DIR) / folder_name
                 try:
                     shutil.rmtree(local_folder)
                     self.logger(f"Deleted local correction folder {folder_name} after successful transfer")
@@ -278,121 +227,78 @@ class FileTransfer5:
             folder_name = entry["folder_name"]
             date = entry["date"]
 
-            milestone_prefix = self.extract_prefix(folder_name)
-            rsync_path = self.get_rsync_path(milestone_prefix)
-
-            self.upload_to_laptop_rsync(folder_name, rsync_path, True)
+            folder_path = os.path.join(c.PI_IMAGE_DIR, folder_name)
+            self.upload_to_network(folder_path, c.REMOTE_RSYNC_PATH, delete_files=True)
 
         self.upload_background()
         self.upload_darkfield()
 
-    #def save_all_data(self, folder_name_dict):
-        #self.move_scanning_images()
-
-        #self.upload_background()
-        #self.upload_darkfield()
-
-        #for entry in folder_name_dict:
-            #folder_name = entry["folder_name"]
-            #date = entry["date"]
-
-            #self.upload_to_dropbox(folder_name, self.rclone_remote_zstack, True)
-            #self.upload_to_laptop_rsync(folder_name, self.rsync_remote, True)
-
     def upload_background(self):
         pattern = "no-slide_*"
-        pi_folders = os.listdir(self.pi_image_dir)
+        pi_folders = os.listdir(c.PI_IMAGE_DIR)
 
         matching_folders = fnmatch.filter(pi_folders, pattern)
         print(matching_folders)
 
+        rsync_path = self.get_correction_rsync_path("no-slide")
+
         for folder in matching_folders:
-            for milestone in self.milestone_list:
-                print(f"Saving background images for Milestone: {milestone}")
-                if milestone == "RA":
-                    rsync_no_slide = f"/Volumes/{c.EXTERNAL_SSD}/Milestone_5/no-slide"
-                elif milestone == "ID":
-                    rsync_no_slide = f"/Volumes/{c.EXTERNAL_SSD}/ID/no-slide"
-                elif milestone == "WBC":
-                    rsync_no_slide = f"/Volumes/{c.EXTERNAL_SSD}/WBC/no-slide"
-                else:
-                    milestone_number = milestone[1]
-                    rsync_no_slide = f"/Volumes/{c.EXTERNAL_SSD}/Milestone_{milestone_number}/no-slide"
-
-                print(f"Saving background images to path: {rsync_no_slide}")
-
-                if milestone == self.milestone_list[-1]:
-                    self.upload_to_laptop_rsync(folder, rsync_no_slide, True)
-                else:
-                    self.upload_to_laptop_rsync(folder, rsync_no_slide, False)
+            self.logger(f"Saving background images to path: {rsync_path}")
+            folder_path = os.path.join(c.PI_IMAGE_DIR, folder)
+            self.upload_to_network(folder_path, rsync_path, delete_files=True)
 
     def upload_darkfield(self):
         pattern = "no-light_*"
-        pi_folders = os.listdir(self.pi_image_dir)
+        pi_folders = os.listdir(c.PI_IMAGE_DIR)
 
         matching_folders = fnmatch.filter(pi_folders, pattern)
         print(matching_folders)
 
+        rsync_path = self.get_correction_rsync_path("no-light")
+
         for folder in matching_folders:
-            for milestone in self.milestone_list:
-                print(f"Saving darkfield images for Milestone: {milestone}")
-                if milestone == "RA":
-                    rsync_no_light = f"/Volumes/{c.EXTERNAL_SSD}/Milestone_5/no-light"
-                elif milestone == "ID":
-                    rsync_no_light = f"/Volumes/{c.EXTERNAL_SSD}/ID/no-light"
-                elif milestone == "WBC":
-                    rsync_no_light = f"/Volumes/{c.EXTERNAL_SSD}/WBC/no-light"
-                else:
-                    milestone_number = milestone[1]
-                    rsync_no_light = f"/Volumes/{c.EXTERNAL_SSD}/Milestone_{milestone_number}/no-light"
+            self.logger(f"Saving darkfield images to path: {rsync_path}")
+            folder_path = os.path.join(c.PI_IMAGE_DIR, folder)
+            self.upload_to_network(folder_path, rsync_path, delete_files=True)
 
-                print(f"Saving darkfield images to path: {rsync_no_light}")
+    def copy_correction_folders_to_slide_case(self):
+        no_slide_src = os.path.join(c.PI_IMAGE_DIR, f"no-slide_{self.date}_{c.MICROSCOPE_ID}")
+        no_light_src = os.path.join(c.PI_IMAGE_DIR, f"no-light_{self.date}_{c.MICROSCOPE_ID}")
 
-                if milestone == self.milestone_list[-1]:
-                    self.upload_to_laptop_rsync(folder, rsync_no_light, True)
-                else:
-                    self.upload_to_laptop_rsync(folder, rsync_no_light, False)
+        dest = os.path.join(c.PI_IMAGE_DIR, self.slide_case_folder)
 
-    def upload_to_laptop_rsync(self, folder_name, remote_path, delete_files = False):
-        local_path = Path(self.pi_image_dir) / folder_name
-        if not local_path.exists():
-            self.logger(f"Folder {folder_name} does not exist in {self.pi_image_dir}.")
+        manifest_json_path = os.path.join(dest, "manifest.json")
+        no_slide_json_path = os.path.join(dest, f"no-slide_{self.date}_{c.MICROSCOPE_ID}", "no-slide.json")
+        no_light_json_path = os.path.join(dest, f"no-light_{self.date}_{c.MICROSCOPE_ID}", "no-light.json")
+
+        # no-slide
+        shutil.copytree(no_slide_src, dest, dirs_exist_ok=True)
+        append_correction_metadata_to_manifest("no-slide", manifest_json_path, no_slide_json_path)
+
+        # no-light
+        shutil.copytree(no_light_src, dest, dirs_exist_ok=True)
+        append_correction_metadata_to_manifest("no-light", manifest_json_path, no_light_json_path)
+
+    def upload_to_network(self, folder_absolute_path, rsync_path, delete_files = False):
+        folder_name = os.path.basename(folder_absolute_path)
+        if not os.path.exists(folder_absolute_path):
+            self.logger(f"Folder {folder_absolute_path} does not exist.")
             return False
 
-        remote = f"{self.username}@{self.hostname}:{remote_path}"
-        rsync_cmd = ["rsync", "-avz", str(local_path), remote]
+        remote_path = f"{self.username}@{self.hostname}:{rsync_path}"
+        rsync_cmd = ["rsync", "-avz", str(folder_absolute_path), remote_path]
 
-        self.logger(f"Starting rsync to laptop: {rsync_cmd}")
+        self.logger(f"Starting rsync to network: {rsync_cmd}")
         try:
             subprocess.run(rsync_cmd, check=True)
-            self.logger(f"Successfully transfered {folder_name} to laptop")
+            self.logger(f"Successfully transfered {folder_name} to network")
 
             if delete_files:
-                shutil.rmtree(local_path)
+                shutil.rmtree(folder_absolute_path)
                 self.logger(f"Deleted local folder {folder_name} after transfer")
             return True
         except subprocess.CalledProcessError as e:
             self.logger(f"Error during rsync copy: {e}")
-            return False
-
-    def upload_to_dropbox(self, folder_name, remote_path, delete_files = False):
-        local_path = Path(self.pi_image_dir) / folder_name
-        if not local_path.exists():
-            self.logger(f"Folder {folder_name} does not exist in {self.pi_image_dir}.")
-            return False
-
-        rclone_cmd = ["rclone", "copy", str(local_path), f"{remote_path}/{folder_name}", "--create-empty-src-dirs", "--progress"]
-        self.logger(f"Starting rclone copy to Dropbox: {rclone_cmd}")
-        try:
-            subprocess.run(rclone_cmd, check=True)
-            self.logger(f"Successfully copied {folder_name} to Dropbox")
-
-            if delete_files:
-                shutil.rmtree(local_path)
-                self.logger(f"Deleted local folder {local_path}")
-            return True
-        except subprocess.CalledProcessError as e:
-            self.logger(f"Error during rclone copy: {e}")
             return False
 
     def image_cleanup(self, focus_view, obj, z_focus, current_x, current_y, points_before, points_after):
@@ -401,7 +307,7 @@ class FileTransfer5:
 
         folder_path = self.data_path_generator(focus_view, obj)
         pi_files = os.listdir(folder_path)
-        pattern = f"{self.barcode}_{self.date}_{self.microscope_id}_unstained_{self.smear_id}_{obj}x_{focus_view}_{current_x}x_{current_y}y_*.*"
+        pattern = f"{self.barcode}_{self.date}_{c.MICROSCOPE_ID}_unstained_{self.smear_id}_{obj}x_{focus_view}_{current_x}x_{current_y}y_*.*"
         matching_files = fnmatch.filter(pi_files, pattern)
         if not matching_files:
             print("Error: no files found to delete")
@@ -426,15 +332,14 @@ if __name__ == "__main__":
     #--- Test File Transfer ---
     #file.upload_background()
     #file.upload_darkfield()
-    #file.upload_to_dropbox("M5AAAA", c.RCLONE_REMOTE_ZSTACK)
-    #file.upload_to_laptop_rsync("M5AAAA", True)
+    #file.upload_to_network("M5AAAA", True)
 
     #file.set_barcode("M5I2UQ")
     #file.set_smear_id("SM2")
     #file.image_cleanup(1, 40, 393, 130, 13, 15, 5)
 
     #rsync_remote = c.RSYNC_REMOTE
-    #file.upload_to_laptop_rsync("M5RCT6", rsync_remote, True)
+    #file.upload_to_network("M5RCT6", rsync_remote, True)
 
-    path = f"/Volumes/{c.EXTERNAL_SSD}/Milestone_8/no-light"
-    file.upload_to_laptop_rsync("no-light_20260507_M1", path, False)
+    path = f"/Volumes/{c.EXTERNAL_SSD}/ID/no-slide"
+    file.upload_to_network("no-slide_20260624_M1", path, False)

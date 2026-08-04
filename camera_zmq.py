@@ -35,8 +35,11 @@ class OutputZMQ(Output):
         self.current_tif_path = None
         self.current_json_path = None
         self.save_in_progress = False
+        self.exposure_time = None
+        self.analogue_gain = None
+        self.z_height = None
 
-    def accumulate(self, accT, filename_base: str, folder_path: str):
+    def accumulate(self, accT, filename_base: str, folder_path: str, exposure_time=None, analogue_gain=None, z_height=None):
         """
         Start frame accumulation process.
         """
@@ -48,6 +51,9 @@ class OutputZMQ(Output):
             self.startTime = time.time()
             self.X = None
             self.XX = None
+            self.exposure_time = exposure_time
+            self.analogue_gain = analogue_gain
+            self.z_height = z_height
 
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             self.current_tif_path = os.path.join(folder_path, f"{filename_base}.tif")
@@ -132,11 +138,19 @@ class OutputZMQ(Output):
             tfw.write(pvar.astype(np.float32))
 
         with open(self.current_json_path, "w") as fp:  # Use dynamic filename
-            json.dump({"camera": "rpi-hq",
+            json.dump({"camera": c.CAMERA,
+                       "sensor": c.SENSOR,
+                       "lens_adapter": c.LENS_ADAPTER,
+                       "light_source": c.LIGHT_SOURCE,
+                       "exposure_time": self.exposure_time,
+                       "analogue_gain": self.analogue_gain,
                        "frames": self.accT,
                        "time": time.time() - self.startTime,
-                       "filename_used": os.path.basename(self.current_tif_path)},
+                       "data_timestamp": datetime.now().strftime("%Y%m%d_%H%M%S"),
+                       "image_filename": os.path.basename(self.current_tif_path),
+                       "z_height": self.z_height},
                       fp)  # Record final filename in metadata
+
 
         self.save_in_progress = False
         if self.verbose:
@@ -190,7 +204,10 @@ def camera_zmq(verbose = True):
                     folder_path_from_client = msg.get("file_path", f"{c.PI_IMAGE_DIR}")
 
                     if (not output.accumulating()):
-                        output.accumulate(int(msg["nframes"]), filename_base=filename_from_client, folder_path=folder_path_from_client)
+                        metadata = picam2.capture_metadata()
+                        output.accumulate(int(msg["nframes"]), filename_base=filename_from_client, folder_path=folder_path_from_client,
+                                          exposure_time=metadata.get("ExposureTime"), analogue_gain=metadata.get("AnalogueGain"),
+                                          z_height=msg.get("z_height"))
                         socket.send_string(json.dumps({"accumulating": "started"}))
                     else:
                         socket.send_string(json.dumps({"accumulating": "already running"}))

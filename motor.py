@@ -15,7 +15,7 @@ from datetime import datetime
 from datetime import date
 from microscope_log import log_output, log_to_file_only, update_status, update_scoreboard
 from mac_comms import send_background_image_to_mac, send_darkfield_image_to_mac, send_image_to_mac
-from json_handler import read_json
+from json_handler import read_json, create_zstack_json, append_image_data_to_zstack_json, append_correction_image_to_json
 import light_controller as lc
 import time
 import math
@@ -134,7 +134,7 @@ class Motor:
         folder_path = self.filename.data_path_generator(focus_view, obj)
         basename = os.path.basename(folder_path)
         self.logger(f"Queuing {basename} for upload to Mac")
-        enqueue_folder(folder_path, self.filename.barcode)
+        enqueue_folder(folder_path, self.filename.barcode, self.filename.date)
 
     def stop(self):
         # Signal the motor to stop gracefully
@@ -210,11 +210,6 @@ class Motor:
     def calculate_motor_position_x(self, microscope_x_units):
         printer_relative_x_units = microscope_x_units - self.x_offset
         return printer_relative_x_units * self.rot_distance_x
-
-    # Function to calculate Y-axis motor position for a give location in MM from home
-    #def calculate_motor_position_y(self, microscope_y_units):
-        #printer_relative_y_units = microscope_y_units - self.y_offset
-        #return printer_relative_y_units * self.rot_distance_y
 
     # Function to calculate Y-axis motor position for a give location in MM from home - Two Slide approach
     def calculate_motor_position_y(self, microscope_y_units):
@@ -312,13 +307,6 @@ class Motor:
         self.current_x = x_pos
 
     # Function to move y-axis
-    #def move_y_axis(self, y_pos):
-        #self.logger(f"Moving y-axis to position {y_pos}mm")
-        #target_y_mm = self.calculate_motor_position_y(y_pos)
-        #self.move_command(self.target_axis_y, target_y_mm)
-        #self.current_y = y_pos
-
-    # Function to move y-axis
     def move_y_axis(self, y_pos):
         target_y_mm = self.calculate_motor_position_y(y_pos)
 
@@ -360,9 +348,17 @@ class Motor:
     def capture_image(self, z):
         image_filename, file_path = self.filename.data_filename_generator(self.focus_view, self.obj, self.current_x, self.current_y, z)
         self.logger(f"Taking image! Filename: {image_filename}, File Path: {file_path}")
-        self.imager.take_rpi_image(100, image_filename, file_path)
+        self.imager.take_rpi_image(100, image_filename, file_path, z_height=z)
         time.sleep(15)
-        self.imager.update_latest_image_to_jpg(os.path.join(file_path, f"{image_filename}.tif"))
+
+        # sending image to Web UI
+        image_tif_path = os.path.join(file_path, f"{image_filename}.tif")
+        self.imager.update_latest_image_to_jpg(image_tif_path)
+
+        # update zstack json with the image metadata
+        image_json_path = os.path.join(file_path, f"{image_filename}.json")
+        zstack_json_path = os.path.join(file_path, f"{os.path.basename(file_path)}.json")
+        append_image_data_to_zstack_json(zstack_json_path, image_json_path)
 
         return image_filename, file_path
 
@@ -586,6 +582,11 @@ class Motor:
             self.imager.take_rpi_image(100, background_filename, file_path)
             time.sleep(15)
             self.logger(f"Background image taken for {self.obj}x objective")
+            
+            # Appending background image metadata to the no-slide JSON file
+            correction_json_path = os.path.join(file_path, "no-slide.json")
+            image_json_path = os.path.join(file_path, f"{background_filename}.json")
+            append_correction_image_to_json("no-slide", correction_json_path, image_json_path)
 
         self.logger("Background images taken for all objectives")
 
@@ -600,11 +601,18 @@ class Motor:
             time.sleep(15)
             self.logger(f"Darkfield image taken for {self.obj}x objective")
 
+            # Appending darkfield image metadata to the no-light JSON file
+            correction_json_path = os.path.join(file_path, "no-light.json")
+            image_json_path = os.path.join(file_path, f"{dark_filename}.json")
+            append_correction_image_to_json("no-light", correction_json_path, image_json_path)
+            
         self.logger("Darkfield images taken for all objectives")
 
-    def take_dark_background_image(self):
+    def take_correction_images(self):
         self.start_imaging()
         time.sleep(15)
+
+        create_correction_json()
         self.take_background_image()
 
         # send 10x to mac here
@@ -757,7 +765,7 @@ class Motor:
             self.initiate_transfer_queue(self.focus_view, self.obj)
 
         self.logger("Data collection finished. All images have been taken and saved to Images folder")
-        mark_slide_done(self.filename.barcode)
+        mark_slide_done(self.filename.barcode, self.filename.date)
         self.stop_imaging()
 
     def collect_data_milestone5_xy(self, smear_list, xy_coords):
@@ -817,7 +825,8 @@ class Motor:
                                 self.initiate_transfer_queue(self.focus_view, self.obj)
 
         self.logger("Data collection finished. All images have been taken and saved to Images folder")
-        mark_slide_done(self.filename.barcode)
+        self.filename.copy_correction_folders_to_slide_case()
+        mark_slide_done(self.filename.barcode, self.filename.date)
         self.stop_imaging()
 
         # move x-y axis to position that allows for easier removal of slides only if 2nd slide was imaged
@@ -919,7 +928,8 @@ class Motor:
                             f"for smear {smear_id}.")
 
         self.logger("Data collection finished. All images have been taken and saved to Images folder")
-        mark_slide_done(self.filename.barcode)
+        self.filename.copy_correction_folders_to_slide_case()
+        mark_slide_done(self.filename.barcode, self.filename.date)
         self.stop_imaging()
 
         # move x-y axis to position that allows for easier removal of slides only if 2nd slide was imaged
@@ -943,7 +953,7 @@ class Motor:
 
         """Queue the failed zstack folder for transfer to Mac."""
         self.logger(f"Queuing {os.path.basename(new_folder_path)} for upload to Mac")
-        enqueue_folder(new_folder_path, self.filename.barcode)
+        enqueue_folder(new_folder_path, self.filename.barcode, self.filename.date)
 
     def qc_check_focus(self):
         zstack_folder_path = self.filename.data_path_generator(self.focus_view, self.obj)
@@ -1005,22 +1015,18 @@ class Motor:
             step_size += 1
         return points
 
-    ### Original version where only a single 10x image is taken 
-    #def collect_data_with_10x(self):
-        #self.move_carousel("1")
-        #z_focus_10x, _, _ = self.scan_z_axis_for_focus()
-        #self.move_z_axis(z_focus_10x)
-        #self.capture_image(z_focus_10x)
-        #self.check_stop()
-
     def collect_data_with_10x(self):
         self.move_carousel("1")
+        create_zstack_json(self.filename, self.current_x, self.current_y, self.focus_view, self.obj)
+
         z_focus_10x, _, _ = self.scan_z_axis_for_focus(True)
         self.filename.image_cleanup(self.focus_view, self.obj, z_focus_10x, self.current_x, self.current_y, 1, 1)
         self.check_stop()
 
     def collect_data_with_20x_40x(self, obj = int):
         self.move_carousel(f"{obj}")
+        create_zstack_json(self.filename, self.current_x, self.current_y, self.focus_view, self.obj)
+        
         z_focus, _, focus_scores = self.scan_z_axis_for_focus(True)
         self.complete_zstack(focus_scores)
         self.check_stop()
@@ -1207,7 +1213,7 @@ class Motor:
                                 self.initiate_transfer_queue(self.focus_view, self.obj)
 
         self.logger("Data collection finished. All images have been taken and saved to Images folder")
-        mark_slide_done(self.filename.barcode)
+        mark_slide_done(self.filename.barcode, self.filename.date)
         self.stop_imaging()
 
         # move x-y axis to position that allows for easier removal of slides only if 2nd slide was imaged

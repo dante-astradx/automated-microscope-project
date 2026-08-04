@@ -52,7 +52,10 @@ def log_milestone_run(
 
     gs = GoogleSheetClient(service_account_file, spreadsheet_id)
 
-    tab_master, tab_log = get_spreadsheet_tab_names(barcode)
+    #tab_master, tab_log = get_spreadsheet_tab_names(barcode)
+    # Microscope - Imaging Master List and Microscope - Imaging Log
+    tab_master = "Microscope - Imaging Master List"
+    tab_log = "Microscope - Imaging Log"
 
     # ---- 1) UPDATE MASTER LIST TAB ---- #
     ws_master = gs.ws(tab_master)

@@ -102,10 +102,10 @@ class Camera:
 
         return response
 
-    def take_rpi_image(self, nframes: int, filename: str, file_path: str = f"{c.PI_IMAGE_DIR}"):
+    def take_rpi_image(self, nframes: int, filename: str, file_path: str = f"{c.PI_IMAGE_DIR}", z_height=None):
         print(f"\nCommanding camera server to accumulate {nframes} images...", flush=True)
         self.send_command(
-            {"command": "accumulate", "nframes": nframes, "filename": filename, "file_path": file_path}
+            {"command": "accumulate", "nframes": nframes, "filename": filename, "file_path": file_path, "z_height": z_height}
         )
         time.sleep(1)
 

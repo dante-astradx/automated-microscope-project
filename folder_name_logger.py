@@ -147,7 +147,9 @@ def get_spreadsheet_csv(barcode):
     return csv_url
 
 def csv_lookup(barcode, selected_smears):
-    csv_url = get_spreadsheet_csv(barcode)
+    #csv_url = get_spreadsheet_csv(barcode)
+    # url for Microscope - Imaging Master List
+    csv_url = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQ-18yNc7T6yJ79Gg8bbdWbB53foW-MTEX78LxqIHkHyF5xVFW_b1yPWI5K-vfrsDtZIp8NOsDTUxfh/pub?gid=747353410&single=true&output=csv"
     response = requests.get(csv_url)
     response.raise_for_status()
     rows = list(csv.reader(response.text.splitlines()))
