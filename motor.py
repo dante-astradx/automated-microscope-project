@@ -15,7 +15,15 @@ from datetime import datetime
 from datetime import date
 from microscope_log import log_output, log_to_file_only, update_status, update_scoreboard
 from mac_comms import send_background_image_to_mac, send_darkfield_image_to_mac, send_image_to_mac
-from json_handler import read_json, create_zstack_json, append_image_data_to_zstack_json, append_correction_image_to_json
+from json_handler import (
+    read_json, 
+    create_zstack_json, 
+    append_image_data_to_zstack_json, 
+    append_correction_image_to_json, 
+    create_correction_json, 
+    create_manifest_json,
+    append_zstack_metadata_to_manifest,
+)
 import light_controller as lc
 import time
 import math
@@ -358,6 +366,7 @@ class Motor:
         # update zstack json with the image metadata
         image_json_path = os.path.join(file_path, f"{image_filename}.json")
         zstack_json_path = os.path.join(file_path, f"{os.path.basename(file_path)}.json")
+        self.logger(f"Updating zstack JSON {os.path.basename(file_path)}.json with image metadata...")
         append_image_data_to_zstack_json(zstack_json_path, image_json_path)
 
         return image_filename, file_path
@@ -612,7 +621,6 @@ class Motor:
         self.start_imaging()
         time.sleep(15)
 
-        create_correction_json()
         self.take_background_image()
 
         # send 10x to mac here
@@ -695,6 +703,16 @@ class Motor:
 
         else:
             self.logger("No additional scanning required — max focus score is centered.")
+
+        # Append the zstack metadata to the manifest.json file
+        manifest_json_path = os.path.join(c.PI_IMAGE_DIR, self.filename.slide_case_folder, "manifest.json")
+        
+        zstack_folder_path = self.filename.data_path_generator(self.focus_view, self.obj)
+        zstack_json_name = f"{os.path.basename(zstack_folder_path)}.json"
+        zstack_json_path = os.path.join(zstack_folder_path, zstack_json_name)
+
+        self.logger(f"Appending zstack metadata from {zstack_json_path} to manifest.json")
+        append_zstack_metadata_to_manifest(manifest_json_path, zstack_json_path)
 
     def first_scan_for_focus_preset(self, smear_list):
         self.home_axis("X, Y")
@@ -1227,8 +1245,13 @@ class Motor:
 if __name__ == "__main__":
     pass
     file = FileTransfer5()
-    file.set_barcode("M5JBIP")
+    file.set_barcode("TEST001")
     motor = Motor(filename = file)
+
+    file.set_smear_id("SM1")
+    #create_zstack_json(file, 100, 10, 1, 40)
+    #create_manifest_json(file)
+    #file.copy_correction_folders_to_slide_case()
 
     # --- Exposure Time Pre-set Test ---
     #motor.home_carousel()
@@ -1265,6 +1288,3 @@ if __name__ == "__main__":
     #motor.move_y_axis(13.5)
     #motor.move_z_axis(200)
     #motor.move_carousel("3")
- 
-    points = motor.generate_spiral(147, 13.5, 15, 2)
-    print(points)

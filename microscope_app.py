@@ -14,7 +14,7 @@ from microscope_log import (
 from folder_generator import generate_barcode_folders, generate_background_folders, generate_darkfield_folders, delete_barcode_folders, check_pre_imaging
 from light_controller import toggle_light
 from google_sheet_editor import log_milestone_run
-from json_hander import create_manifest_json
+from json_handler import create_manifest_json
 import subprocess
 import time
 import json

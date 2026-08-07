@@ -265,18 +265,20 @@ class FileTransfer5:
         no_slide_src = os.path.join(c.PI_IMAGE_DIR, f"no-slide_{self.date}_{c.MICROSCOPE_ID}")
         no_light_src = os.path.join(c.PI_IMAGE_DIR, f"no-light_{self.date}_{c.MICROSCOPE_ID}")
 
-        dest = os.path.join(c.PI_IMAGE_DIR, self.slide_case_folder)
+        manifest_dest = os.path.join(c.PI_IMAGE_DIR, self.slide_case_folder)
+        no_slide_dest = os.path.join(manifest_dest, f"no-slide_{self.date}_{c.MICROSCOPE_ID}")
+        no_light_dest = os.path.join(manifest_dest, f"no-light_{self.date}_{c.MICROSCOPE_ID}")
 
-        manifest_json_path = os.path.join(dest, "manifest.json")
-        no_slide_json_path = os.path.join(dest, f"no-slide_{self.date}_{c.MICROSCOPE_ID}", "no-slide.json")
-        no_light_json_path = os.path.join(dest, f"no-light_{self.date}_{c.MICROSCOPE_ID}", "no-light.json")
+        manifest_json_path = os.path.join(manifest_dest, "manifest.json")
+        no_slide_json_path = os.path.join(no_slide_dest, "no-slide.json")
+        no_light_json_path = os.path.join(no_light_dest, "no-light.json")
 
         # no-slide
-        shutil.copytree(no_slide_src, dest, dirs_exist_ok=True)
+        shutil.copytree(no_slide_src, no_slide_dest, dirs_exist_ok=True)
         append_correction_metadata_to_manifest("no-slide", manifest_json_path, no_slide_json_path)
 
         # no-light
-        shutil.copytree(no_light_src, dest, dirs_exist_ok=True)
+        shutil.copytree(no_light_src, no_light_dest, dirs_exist_ok=True)
         append_correction_metadata_to_manifest("no-light", manifest_json_path, no_light_json_path)
 
     def upload_to_network(self, folder_absolute_path, rsync_path, delete_files = False):
@@ -341,5 +343,5 @@ if __name__ == "__main__":
     #rsync_remote = c.RSYNC_REMOTE
     #file.upload_to_network("M5RCT6", rsync_remote, True)
 
-    path = f"/Volumes/{c.EXTERNAL_SSD}/ID/no-slide"
-    file.upload_to_network("no-slide_20260624_M1", path, False)
+    path = f"{c.REMOTE_RSYNC_PATH}"
+    file.upload_to_network(f"{c.PI_IMAGE_DIR}/TEST001_20260807_M1", path, False)

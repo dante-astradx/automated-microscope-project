@@ -132,10 +132,8 @@ def check_pre_imaging():
 if __name__ == '__main__':
     pass
 
-    if check_pre_imaging():
-        print("Pre-imaging checks passed.")
-    else:
-        print("Pre-imaging checks failed.")
+    generate_barcode_folders("TEST001", ["SM1", "SM2", "SM3"], [2,2,2])
+
 
     # --- Test Folder Generation ---
     #generate_barcode_folders("WBCWWWW", ["SM1"], [1])
