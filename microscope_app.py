@@ -110,7 +110,7 @@ def start():
                 "offset": c.SLIDE_HEIGHT_MM # 25mm offset from config
             })
 
-    #Validate barcode foramts
+    #Validate barcode format
     for slide in slides_to_run:
         if len(slide["smears"]) == 0:
             flash(f"You must select at least one smear to image {slide['barcode']}!")
@@ -147,9 +147,6 @@ def start():
                 file = FileTransfer5(logger=log_output, run_date=run_start_date)
                 file.set_barcode(slide["barcode"])
 
-                # Create the manifest json for this barcode run
-                create_manifest_json(file)
-
                 # Initialize motor with the specific Y-offset for this slide
                 motor_instance = Motor(filename=file, logger=log_output)
                 motor_instance.slide_y_offset = slide["offset"] # Passed to motor for coordinate math
@@ -162,10 +159,11 @@ def start():
                     fovs = [len(c) for c in coords]
                     generate_barcode_folders(slide["barcode"], slide["smears"], fovs, run_date=run_start_date)
 
+                    # Create the manifest json for this barcode run
+                    create_manifest_json(file)
+
                     update_status(f"Imaging barcode {slide['barcode']} & imaging coordinates: {coords}")
-                    motor_instance.collect_data_milestone5_xy(smear_ids, coords)
-                    #motor_instance.wbc_imaging_xy(smear_ids, coords)
-                    #motor_instance.registration_test()
+                    motor_instance.collect_data_xy(smear_ids, coords)
 
                 elif imaging_mode == "Search_Algorithm":
                     desired_fov = 12
@@ -173,9 +171,11 @@ def start():
 
                     generate_barcode_folders(slide["barcode"], slide["smears"], fovs, run_date=run_start_date)
 
+                    # Create the manifest json for this barcode run
+                    create_manifest_json(file)
+
                     update_status(f"Imaging barcode {slide['barcode']}. Searching for {desired_fov} FOV's at {slide['smears']}")
-                    #motor_instance.collect_data_with_search_algorithm(slide["smears"], fovs)
-                    motor_instance.whole_slide_scan_40x(slide["smears"], fovs)
+                    motor_instance.collect_data_with_search_algorithm(slide["smears"], fovs)
 
             update_scoreboard(barcode=None, smear=None, fov=None, status="complete")
             time.sleep(2)

@@ -38,8 +38,9 @@ class OutputZMQ(Output):
         self.exposure_time = None
         self.analogue_gain = None
         self.z_height = None
+        self.magnification = None
 
-    def accumulate(self, accT, filename_base: str, folder_path: str, exposure_time=None, analogue_gain=None, z_height=None):
+    def accumulate(self, accT, filename_base: str, folder_path: str, exposure_time=None, analogue_gain=None, z_height=None, magnification=None):
         """
         Start frame accumulation process.
         """
@@ -53,6 +54,7 @@ class OutputZMQ(Output):
             self.XX = None
             self.exposure_time = exposure_time
             self.analogue_gain = analogue_gain
+            self.magnification = magnification
             self.z_height = z_height
 
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -148,6 +150,7 @@ class OutputZMQ(Output):
                        "time": time.time() - self.startTime,
                        "data_timestamp": datetime.now().strftime("%Y%m%d_%H%M%S"),
                        "image_filename": os.path.basename(self.current_tif_path),
+                       "magnification": self.magnification,
                        "z_height": self.z_height},
                       fp)  # Record final filename in metadata
 
@@ -207,7 +210,7 @@ def camera_zmq(verbose = True):
                         metadata = picam2.capture_metadata()
                         output.accumulate(int(msg["nframes"]), filename_base=filename_from_client, folder_path=folder_path_from_client,
                                           exposure_time=metadata.get("ExposureTime"), analogue_gain=metadata.get("AnalogueGain"),
-                                          z_height=msg.get("z_height"))
+                                          z_height=msg.get("z_height"), magnification=msg.get("magnification"))
                         socket.send_string(json.dumps({"accumulating": "started"}))
                     else:
                         socket.send_string(json.dumps({"accumulating": "already running"}))

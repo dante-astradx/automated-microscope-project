@@ -51,10 +51,9 @@ def create_correction_json(correction):
     }
 
     with open(json_absolute_path, 'w') as file:
-        json.dump(data, file)
+        json.dump(data, file, indent=2)
 
-def create_zstack_json(file_transfer, x_pos, y_pos, fov, obj):
-    working_directory = file_transfer.data_path_generator(fov, obj)
+def create_zstack_json(working_directory, x_pos, y_pos, fov, obj, smear_id):
     zstack_name = os.path.basename(working_directory)
 
     json_name = f"{zstack_name}.json"
@@ -70,8 +69,8 @@ def create_zstack_json(file_transfer, x_pos, y_pos, fov, obj):
         "x_pos": x_pos,
         "y_pos": y_pos,
         "fov": fov,
-        "smear_id": file_transfer.smear_id,
-        "obj": obj,
+        "smear_id": smear_id,
+        "magnification": obj,
         "microscope_id": c.MICROSCOPE_ID,
         "zstack_images": {
             
@@ -79,7 +78,7 @@ def create_zstack_json(file_transfer, x_pos, y_pos, fov, obj):
     }
 
     with open(json_absolute_path, 'w') as file:
-        json.dump(data, file)
+        json.dump(data, file, indent=2)
 
 def create_manifest_json(file_transfer):
     working_directory = os.path.join(c.PI_IMAGE_DIR, file_transfer.slide_case_folder)
@@ -94,7 +93,7 @@ def create_manifest_json(file_transfer):
     }
 
     with open(json_absolute_path, 'w') as file:
-        json.dump(data,file)
+        json.dump(data, file, indent=2)
 
 def append_correction_image_to_json(correction_type, correction_json_path, image_json_path):
     try:
@@ -108,7 +107,7 @@ def append_correction_image_to_json(correction_type, correction_json_path, image
         correction_data[f"{correction_type}_correction_images"][image_key] = image_data
 
         with open(correction_json_path, 'w') as f:
-            json.dump(correction_data, f)
+            json.dump(correction_data, f, indent=2)
 
         os.remove(image_json_path)
 
@@ -116,6 +115,54 @@ def append_correction_image_to_json(correction_type, correction_json_path, image
         print(f"Error: File not found - {e}")
     except KeyError as e:
         print(f"Error: Expected key {e} missing in JSON data.")
+    except json.JSONDecodeError as e:
+        print(f"Error: Invalid JSON - {e}")
+
+def populate_zstack_json_from_folder(zstack_folder_path):
+    """
+    After image_cleanup, scan the zstack folder for remaining image JSONs,
+    append them into the zstack JSON in ascending z-order, then delete each one.
+    The zstack JSON itself (named <folder>.json) is excluded from processing.
+    """
+    zstack_name = os.path.basename(zstack_folder_path)
+    zstack_json_filename = f"{zstack_name}.json"
+    zstack_json_path = os.path.join(zstack_folder_path, zstack_json_filename)
+
+    try:
+        image_json_files = [
+            f for f in os.listdir(zstack_folder_path)
+            if f.endswith(".json") and f != zstack_json_filename
+        ]
+
+        def extract_z(filename):
+            # Filenames end in ..._{z}z.json — extract the integer z value for sorting
+            name = os.path.splitext(filename)[0]
+            z_part = name.rsplit("_", maxsplit=1)[-1]
+            return int(z_part.rstrip("z"))
+
+        image_json_files.sort(key=extract_z)
+
+        with open(zstack_json_path, 'r') as f:
+            zstack_data = json.load(f)
+
+        for image_json_filename in image_json_files:
+            image_json_path = os.path.join(zstack_folder_path, image_json_filename)
+            try:
+                with open(image_json_path, 'r') as f:
+                    image_data = json.load(f)
+                image_key = image_data.get("image_filename", image_json_filename)
+                zstack_data["zstack_images"][image_key] = image_data
+                os.remove(image_json_path)
+            except (FileNotFoundError, json.JSONDecodeError, KeyError) as e:
+                print(f"Warning: could not process {image_json_filename} - {e}")
+
+        with open(zstack_json_path, 'w') as f:
+            json.dump(zstack_data, f, indent=2)
+
+    except FileNotFoundError as e:
+        print(f"Error: File not found - {e}")
+    except KeyError as e:
+        print(f"Error: Expected key {e} missing in zstack JSON.")
     except json.JSONDecodeError as e:
         print(f"Error: Invalid JSON - {e}")
 
@@ -131,7 +178,7 @@ def append_image_data_to_zstack_json(zstack_json_path, image_json_path):
         zstack_data["zstack_images"][image_key] = image_data
 
         with open(zstack_json_path, 'w') as f:
-            json.dump(zstack_data, f)
+            json.dump(zstack_data, f, indent=2)
 
         os.remove(image_json_path)
 
@@ -153,7 +200,7 @@ def append_zstack_metadata_to_manifest(manifest_json_path, zstack_json_path):
         manifest_data["zstack_metadata"].append(zstack_data)
 
         with open(manifest_json_path, 'w') as f:
-            json.dump(manifest_data, f)
+            json.dump(manifest_data, f, indent=2)
 
     except FileNotFoundError as e:
         print(f"Error: File not found - {e}")
@@ -173,7 +220,7 @@ def append_correction_metadata_to_manifest(correction_type, manifest_json_path, 
         manifest_data[f"{correction_type}_correction"] = correction_data
 
         with open(manifest_json_path, "w") as f:
-            json.dump(manifest_data, f)
+            json.dump(manifest_data, f, indent=2)
 
     except FileNotFoundError as e:
         print(f"Error: File not found - {e}")

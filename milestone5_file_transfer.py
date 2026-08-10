@@ -84,13 +84,11 @@ class FileTransfer5:
     def background_filename_generator(self, obj):
         filename = f"no-slide_{self.date}_{c.MICROSCOPE_ID}_{obj}x"
         file_path = os.path.join(c.PI_IMAGE_DIR, f"no-slide_{self.date}_{c.MICROSCOPE_ID}")
-        self.logger(f"Background images will be saved to: {file_path}")
         return filename, file_path
 
     def darkfield_filename_generator(self, obj):
         filename = f"no-light_{self.date}_{c.MICROSCOPE_ID}_{obj}x"
         file_path = os.path.join(c.PI_IMAGE_DIR, f"no-light_{self.date}_{c.MICROSCOPE_ID}")
-        self.logger(f"Darkfield images will be saved to: {file_path}")
         return filename, file_path
 
     def scanning_filename_generator(self, x_pos, y_pos, z_pos):
@@ -102,7 +100,6 @@ class FileTransfer5:
     def data_path_generator(self, focus_view, obj):
         data_folder = f"{self.slide_case_folder}_unstained_{self.smear_id}_{obj}x_{focus_view}"
         file_path = os.path.join(c.PI_IMAGE_DIR, self.slide_case_folder, data_folder)
-        self.logger(f"Image will be saved to: {file_path}")
 
         return file_path
 

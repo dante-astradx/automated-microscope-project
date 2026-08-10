@@ -23,6 +23,7 @@ from json_handler import (
     create_correction_json, 
     create_manifest_json,
     append_zstack_metadata_to_manifest,
+    populate_zstack_json_from_folder,
 )
 import light_controller as lc
 import time
@@ -67,6 +68,7 @@ class Motor:
 
         # Accepting instance of FileTransfer
         self.filename = filename
+        self.zstack_folder_path = None
 
         # Accepting logger function
         self.logger = logger
@@ -356,18 +358,12 @@ class Motor:
     def capture_image(self, z):
         image_filename, file_path = self.filename.data_filename_generator(self.focus_view, self.obj, self.current_x, self.current_y, z)
         self.logger(f"Taking image! Filename: {image_filename}, File Path: {file_path}")
-        self.imager.take_rpi_image(100, image_filename, file_path, z_height=z)
+        self.imager.take_rpi_image(100, image_filename, file_path, z_height=z, magnification=self.obj)
         time.sleep(15)
 
         # sending image to Web UI
         image_tif_path = os.path.join(file_path, f"{image_filename}.tif")
         self.imager.update_latest_image_to_jpg(image_tif_path)
-
-        # update zstack json with the image metadata
-        image_json_path = os.path.join(file_path, f"{image_filename}.json")
-        zstack_json_path = os.path.join(file_path, f"{os.path.basename(file_path)}.json")
-        self.logger(f"Updating zstack JSON {os.path.basename(file_path)}.json with image metadata...")
-        append_image_data_to_zstack_json(zstack_json_path, image_json_path)
 
         return image_filename, file_path
 
@@ -503,61 +499,6 @@ class Motor:
 
         return super_fine_z_focus, super_fine_max_score, final_focus_scores
 
-    def dynamic_focus(self, ref_z_focus):
-        # Move to reference focus level
-        self.move_z_axis(ref_z_focus)
-        time.sleep(1)
-        ref_score = float(self.imager.get_focus_score())
-        self.logger(f"Focus score at {ref_z_focus}z: {ref_score}")
-
-        # Test moving upward first
-        self.move_z_axis(ref_z_focus + 2)
-        time.sleep(1)
-        up_score = float(self.imager.get_focus_score())
-        self.logger(f"Focus score at {ref_z_focus + 1}: {up_score}")
-
-        # Determine direction based on whether score improved
-        if up_score > ref_score:
-            direction = 1  # move up
-            current_score = up_score
-            self.logger(f"Moving up to find focus level: {up_score} > {ref_score}")
-        else:
-            # Try moving down instead
-            self.logger(f"Moving down to find focus level: {up_score} < {ref_score}")
-            self.move_z_axis(ref_z_focus - 2)
-            time.sleep(1)
-            down_score = float(self.imager.get_focus_score())
-            self.logger(f"Focus score at {ref_z_focus - 3}: {down_score}")
-            if down_score > ref_score:
-                direction = -1  # move down
-                current_score = down_score
-                self.logger(f"Moving down to find focus level: {down_score} > {ref_score}")
-            else:
-                # Neither direction improves → already at best focus
-                self.logger(f"Already at focus level. Moving back to {ref_z_focus}")
-                self.move_z_axis(ref_z_focus)
-                return ref_z_focus
-
-        # Keep scanning in the chosen direction until the focus drops
-        prev_z = self.current_z
-        while True:
-            next_z = self.current_z + direction
-            self.move_z_axis(next_z)
-            time.sleep(1)
-            new_score = float(self.imager.get_focus_score())
-            self.logger(f"Focus score at {next_z}: {new_score}")
-
-            if new_score > current_score:
-                # still improving → continue
-                self.logger(f"{new_score} > {current_score}: Continue moving")
-                current_score = new_score
-                prev_z = next_z
-            else:
-                # focus dropped → move back one step and stop
-                self.logger(f"{new_score} < {current_score}: Score has dropped. Move back to {prev_z}")
-                self.move_z_axis(prev_z)
-                return prev_z
-
     def go_to_random_position(self):
         random_x_pos = random.randint(self.start_x, self.end_x)
         random_y_pos = random.randint(self.start_y, self.end_y)
@@ -588,7 +529,7 @@ class Motor:
             self.move_carousel(f"{i+1}")
             background_filename, file_path = self.filename.background_filename_generator(self.obj)
             self.logger(f"Taking background image for {self.obj}x objective. Filename: {background_filename}")
-            self.imager.take_rpi_image(100, background_filename, file_path)
+            self.imager.take_rpi_image(100, background_filename, file_path, magnification=self.obj)
             time.sleep(15)
             self.logger(f"Background image taken for {self.obj}x objective")
             
@@ -606,7 +547,7 @@ class Motor:
             self.move_carousel(f"{i+1}")
             dark_filename, file_path = self.filename.darkfield_filename_generator(self.obj)
             self.logger(f"Taking darkfield image for {self.obj}x objective. Filename: {dark_filename}")
-            self.imager.take_rpi_image(100, dark_filename, file_path)
+            self.imager.take_rpi_image(100, dark_filename, file_path, magnification=self.obj)
             time.sleep(15)
             self.logger(f"Darkfield image taken for {self.obj}x objective")
 
@@ -704,15 +645,9 @@ class Motor:
         else:
             self.logger("No additional scanning required — max focus score is centered.")
 
-        # Append the zstack metadata to the manifest.json file
-        manifest_json_path = os.path.join(c.PI_IMAGE_DIR, self.filename.slide_case_folder, "manifest.json")
-        
-        zstack_folder_path = self.filename.data_path_generator(self.focus_view, self.obj)
-        zstack_json_name = f"{os.path.basename(zstack_folder_path)}.json"
-        zstack_json_path = os.path.join(zstack_folder_path, zstack_json_name)
-
-        self.logger(f"Appending zstack metadata from {zstack_json_path} to manifest.json")
-        append_zstack_metadata_to_manifest(manifest_json_path, zstack_json_path)
+        # Populate zstack JSON with surviving image JSONs (post-cleanup), sorted by z
+        self.logger(f"Populating zstack JSON from folder {os.path.basename(self.zstack_folder_path)}...")
+        populate_zstack_json_from_folder(self.zstack_folder_path)
 
     def first_scan_for_focus_preset(self, smear_list):
         self.home_axis("X, Y")
@@ -756,37 +691,7 @@ class Motor:
         self.logger(f"10x: {self.focus_preset_10x}, 20x: {self.focus_preset_20x}, 40x: {self.focus_preset_40x}")
         return self.focus_preset_10x, self.focus_preset_20x, self.focus_preset_40x
 
-    def wbc_imaging_xy(self, smear_list, xy_coords):
-        self.start_imaging()
-        smear_id = smear_list[0]
-        self.set_smear_id(smear_id)
-        self.focus_view = 0
-        self.first_scan_for_focus_preset([smear_id])
-
-        for i in range(len(xy_coords[0])):
-            x_pos = xy_coords[0][i][0]
-            y_pos = xy_coords[0][i][1]
-
-            self.logger(f"Collecting data at {x_pos}, {y_pos + self.slide_y_offset} in {smear_id}")
-
-            self.check_stop()
-            self.focus_view += 1
-            update_scoreboard(fov=self.focus_view, status="imaging")
-
-            self.home_axis("X, Y")
-            self.move_x_axis(x_pos)
-            self.move_y_axis(y_pos)
-            self.check_stop()
-
-            # 10x imaging at x,y
-            self.collect_data_with_10x()
-            self.initiate_transfer_queue(self.focus_view, self.obj)
-
-        self.logger("Data collection finished. All images have been taken and saved to Images folder")
-        mark_slide_done(self.filename.barcode, self.filename.date)
-        self.stop_imaging()
-
-    def collect_data_milestone5_xy(self, smear_list, xy_coords):
+    def collect_data_xy(self, smear_list, xy_coords):
         self.start_imaging()
 
         for i in range(len(smear_list)):
@@ -813,7 +718,8 @@ class Motor:
 
                 # code logic for implementation with the focus check QC
                 #stages = [(self.collect_data_with_10x, "10x", None), (self.collect_data_with_20x_40x, "20x", 2), (self.collect_data_with_20x_40x, "40x", 3)]
-                stages = [(self.collect_data_with_20x_40x, "40x", 3)]
+                stages = [(self.collect_data_with_10x, "10x", None), (self.collect_data_with_20x_40x, "40x", 3)]
+                #stages = [(self.collect_data_with_20x_40x, "40x", 3)]
                 for collect_func, name, arg in stages:
                     passed_qc = False
 
@@ -887,7 +793,7 @@ class Motor:
 
                 scanning_filename = self.filename.scanning_filename_generator(self.current_x, self.current_y, z_focus_10x)
                 self.logger(f"Taking image! Filename: {scanning_filename}")
-                self.imager.take_rpi_image(100, scanning_filename)
+                self.imager.take_rpi_image(100, scanning_filename, magnification=self.obj)
                 time.sleep(15)
                 self.imager.update_latest_image_to_jpg(os.path.join(c.PI_IMAGE_DIR, f"{scanning_filename}.tif"))
 
@@ -904,7 +810,8 @@ class Motor:
 
                         # code logic for implementation with the focus check QC
                         #stages = [(self.collect_data_with_10x, "10x", None), (self.collect_data_with_20x_40x, "20x", 2), (self.collect_data_with_20x_40x, "40x", 3)]
-                        stages = [(self.collect_data_with_20x_40x, "40x", 3)]
+                        stages = [(self.collect_data_with_10x, "10x", None), (self.collect_data_with_20x_40x, "40x", 3)]
+                        #stages = [(self.collect_data_with_20x_40x, "40x", 3)]
                         for collect_func, name, arg in stages:
                             passed_qc = False
 
@@ -958,24 +865,22 @@ class Motor:
             pass
 
     def handle_failed_qc(self):
-        zstack_folder_path = self.filename.data_path_generator(self.focus_view, self.obj)
-        self.logger(f"Zstack failed QC at path: {zstack_folder_path}")
+        self.logger(f"Zstack failed QC at path: {self.zstack_folder_path}")
 
         new_folder_path = self.filename.failed_qc_path_generator(self.focus_view, self.obj)
         self.logger(f"Creating new folder path to store failed zstack")
         self.logger(f"Changing the folder name to: {os.path.basename(new_folder_path)} ")
-        os.rename(zstack_folder_path, new_folder_path)
+        os.rename(self.zstack_folder_path, new_folder_path)
 
-        self.logger("Recreating the original folder path: {zstack_folder_path}")
-        Path(zstack_folder_path).mkdir(parents=True, exist_ok=True)
+        self.logger(f"Recreating the original folder path: {self.zstack_folder_path}")
+        Path(self.zstack_folder_path).mkdir(parents=True, exist_ok=True)
 
         """Queue the failed zstack folder for transfer to Mac."""
         self.logger(f"Queuing {os.path.basename(new_folder_path)} for upload to Mac")
         enqueue_folder(new_folder_path, self.filename.barcode, self.filename.date)
 
     def qc_check_focus(self):
-        zstack_folder_path = self.filename.data_path_generator(self.focus_view, self.obj)
-        self.logger(f"Running QC check on path: {zstack_folder_path}")
+        self.logger(f"Running QC check on path: {self.zstack_folder_path}")
 
         background_filename, background_file_path = self.filename.background_filename_generator(self.obj)
         darkfield_filename, darkfield_file_path = self.filename.darkfield_filename_generator(self.obj)
@@ -983,7 +888,19 @@ class Motor:
         dark_path = f"{darkfield_file_path}/{darkfield_filename}.tif"
         back_path = f"{background_file_path}/{background_filename}.tif"
 
-        result = a.check_focus(zstack_folder_path, self.current_x, self.current_y, dark_path, back_path)
+        result = a.check_focus(self.zstack_folder_path, self.current_x, self.current_y, dark_path, back_path)
+
+        # If the QC check passes, append the zstack metadata to the manifest.json file
+        if result:
+            # Append the zstack metadata to the manifest.json file
+            manifest_json_path = os.path.join(c.PI_IMAGE_DIR, self.filename.slide_case_folder, "manifest.json")
+
+            zstack_json_name = f"{os.path.basename(self.zstack_folder_path)}.json"
+            zstack_json_path = os.path.join(self.zstack_folder_path, zstack_json_name)
+
+            self.logger(f"Appending zstack metadata from {zstack_json_path} to manifest.json")
+            append_zstack_metadata_to_manifest(manifest_json_path, zstack_json_path)
+
         return result
 
     def get_smear_center(self, smear_id):
@@ -1035,15 +952,22 @@ class Motor:
 
     def collect_data_with_10x(self):
         self.move_carousel("1")
-        create_zstack_json(self.filename, self.current_x, self.current_y, self.focus_view, self.obj)
+        self.zstack_folder_path = self.filename.data_path_generator(self.focus_view, self.obj)
+        create_zstack_json(self.zstack_folder_path, self.current_x, self.current_y, self.focus_view, self.obj, self.filename.smear_id)
 
         z_focus_10x, _, _ = self.scan_z_axis_for_focus(True)
         self.filename.image_cleanup(self.focus_view, self.obj, z_focus_10x, self.current_x, self.current_y, 1, 1)
+
+        # Populate zstack JSON with surviving image JSONs (post-cleanup), sorted by z
+        self.logger(f"Populating zstack JSON from folder {os.path.basename(self.zstack_folder_path)}...")
+        populate_zstack_json_from_folder(self.zstack_folder_path)
+
         self.check_stop()
 
     def collect_data_with_20x_40x(self, obj = int):
         self.move_carousel(f"{obj}")
-        create_zstack_json(self.filename, self.current_x, self.current_y, self.focus_view, self.obj)
+        self.zstack_folder_path = self.filename.data_path_generator(self.focus_view, self.obj)
+        create_zstack_json(self.zstack_folder_path, self.current_x, self.current_y, self.focus_view, self.obj, self.filename.smear_id)
         
         z_focus, _, focus_scores = self.scan_z_axis_for_focus(True)
         self.complete_zstack(focus_scores)
@@ -1094,164 +1018,12 @@ class Motor:
         #self.stop_imaging()
         self.logger("registration_test: Complete")
 
-    def smear_analysis_test(self, smear_list):
-        self.start_imaging()
-        self.move_carousel("1")
-        self.focus_view = 1
-
-        start_y = 7
-        end_y = 22
-
-        background_filename, background_file_path = self.filename.background_filename_generator(self.obj)
-        darkfield_filename, darkfield_file_path = self.filename.darkfield_filename_generator(self.obj)
-
-        dark_path = f"{darkfield_file_path}/{darkfield_filename}.tif"
-        back_path = f"{background_file_path}/{background_filename}.tif"
-
-        for i in range(len(smear_list)):
-            smear_id = smear_list[i]
-            self.set_smear_id(smear_id)
-
-            self.first_scan_for_focus_preset([smear_id])
-
-            # find focus level at midpoint of smear
-            ref_z_focus, ref_max_score, _ = self.scan_z_axis_for_focus()
-
-            even_step = 2
-
-            if smear_id == "SM1":
-                start_x = 141
-                end_x = 151
-            elif smear_id == "SM2":
-                start_x = 123
-                end_x = 133
-            elif smear_id == "SM3":
-                start_x = 107
-                end_x = 117
-            else:
-                self.logger("Smear ID can't be identified. ERROR")
-
-            for current_y in range(start_y, end_y + 1, 1):
-                self.move_y_axis(current_y)
-
-                if (current_y - start_y) % 2 == 0:
-                    # Even row (0-based): left -> right, step 2
-                    x_sweep_range = range(start_x, end_x + 1, even_step)
-                    self.logger(f"Scanning Y: {current_y}, X: {start_x} to {end_x} (step={even_step})")
-                else:
-                    # Odd row: start at end_x-1 if the horizontal span is an even number of mm,
-                    # otherwise start at end_x. This makes the odd row hit the "in-between" positions.
-                    if (end_x - start_x) % even_step == 0:
-                        odd_start = end_x - 1
-                    else:
-                        odd_start = end_x
-
-                    # Right -> left with step -2
-                    x_sweep_range = range(odd_start, start_x - 1, -even_step)
-                    self.logger(f"Scanning Y: {current_y}, X: {odd_start} down to {start_x} (step={even_step})")
-
-                for current_x in x_sweep_range:
-                    self.move_x_axis(current_x)
-                    z_focus_level = self.dynamic_focus(ref_z_focus)
-                    image_filename, image_path = self.capture_image(self.current_z)
-                    ref_z_focus = z_focus_level
-
-                    is_there_bacteria = False
-                    im_path = f"{image_path}/{image_filename}.tif"
-                    is_there_bacteria = a.is_good_for_ID(im_path, dark_path, back_path)
-
-                    if is_there_bacteria:
-                        self.logger("BACTERIA IDENTIFIED")
-                    else:
-                        self.logger("No bacteria found")
-
-                    self.filename.append_csv(self.current_x, self.current_y, self.current_z, is_there_bacteria)
-
-        self.stop_imaging()
-
-    def whole_slide_scan_40x(self, smear_list, fov_list):
-        self.start_imaging()
-        for i in range(len(smear_list)):
-            smear_id = smear_list[i]
-            self.set_smear_id(smear_id)
-            fov_target = fov_list[i]
-
-            self.first_scan_for_focus_preset([smear_id])
-
-            center_x, center_y = self.get_smear_center(smear_id)
-            
-            # create new coordiante list here 
-            search_coords = self.generate_spiral(center_x, center_y, fov_target, 2)
-            
-            self.focus_view = 0
-            for j in range(len(search_coords)):
-                x_pos = search_coords[j][0]
-                y_pos = search_coords[j][1]
-
-                self.logger(f"Collecting data at {x_pos}, {y_pos + self.slide_y_offset} in {smear_id}")
-
-                self.check_stop()
-                self.focus_view += 1
-                update_scoreboard(fov=self.focus_view, status="imaging")
-
-                # to save some time we will not home in-between each fov 
-                #self.home_axis("X, Y")                
-                self.move_x_axis(x_pos)
-                self.move_y_axis(y_pos)
-                self.check_stop()
-
-                # code logic for implementation with the focus check QC
-                stages = [(self.collect_data_with_20x_40x, "40x", 3)]
-                for collect_func, name, arg in stages:
-                    passed_qc = False
-
-                    # Try up to 2 times
-                    for attempt in range(1, 3):
-                        self.logger(f"Running {name} collection (Attempt {attempt}/2)")
-
-                        # Run the collection (with or without argument)
-                        if arg is not None:
-                            collect_func(arg)
-                        else:
-                            collect_func()
-
-                        self.logger("Running QC check on zstack")
-                        if self.qc_check_focus():
-                            self.logger(f"{name} QC Passed.")
-                            self.initiate_transfer_queue(self.focus_view, self.obj)
-                            passed_qc = True
-                            break # Success! Exit the retry loop and go to next stage
-                        else:
-                            self.logger(f"{name} QC Failed on attempt {attempt}.")
-                            self.handle_failed_qc()
-                            if attempt == 1:
-                                self.logger(f"Retrying {name} collection...")
-                            else:
-                                self.logger(f"{name} failed twice. Moving to next objective/step.")
-                                self.initiate_transfer_queue(self.focus_view, self.obj)
-
-        self.logger("Data collection finished. All images have been taken and saved to Images folder")
-        mark_slide_done(self.filename.barcode, self.filename.date)
-        self.stop_imaging()
-
-        # move x-y axis to position that allows for easier removal of slides only if 2nd slide was imaged
-        if self.slide_y_offset == 25: # this is how we determine if 2nd slide was being imaged
-            self.move_x_axis(130)
-            self.move_y_axis(15)
-        else:
-            pass
-
 
 if __name__ == "__main__":
     pass
     file = FileTransfer5()
     file.set_barcode("TEST001")
     motor = Motor(filename = file)
-
-    file.set_smear_id("SM1")
-    #create_zstack_json(file, 100, 10, 1, 40)
-    #create_manifest_json(file)
-    #file.copy_correction_folders_to_slide_case()
 
     # --- Exposure Time Pre-set Test ---
     #motor.home_carousel()
@@ -1281,10 +1053,10 @@ if __name__ == "__main__":
     #motor.move_carousel("2")
 
     # --- Basic Motor Control Test ---
-    #motor.home_axis("X, Y")
+    motor.home_axis("X, Y")
     #motor.move_x_axis(c.SLIDE_1_SM3_CENTER_X)
     #motor.move_y_axis(c.SLIDE_1_CENTER_Y)
-    #motor.move_x_axis(137)
-    #motor.move_y_axis(13.5)
+    motor.move_x_axis(137.5)
+    motor.move_y_axis(13.75)
     #motor.move_z_axis(200)
-    #motor.move_carousel("3")
+    motor.move_carousel("3")
