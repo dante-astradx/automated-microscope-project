@@ -87,6 +87,8 @@ def create_manifest_json(file_transfer):
 
     data = {
         "manifest_json_path": json_relative_path,
+        "barcode": file_transfer.barcode,
+        "slide_case_folder": file_transfer.slide_case_folder,
         "zstack_metadata": [],
         "no-slide_correction": {},
         "no-light_correction": {}
@@ -94,6 +96,30 @@ def create_manifest_json(file_transfer):
 
     with open(json_absolute_path, 'w') as file:
         json.dump(data, file, indent=2)
+
+def update_failed_qc_zstack_json(new_zstack_name, new_zstack_json_absolute_path, new_folder_absolute_path):
+    new_zstack_json_relative_path = os.path.relpath(new_zstack_json_absolute_path, c.PI_IMAGE_DIR)
+    new_folder_relative_path = os.path.relpath(new_folder_absolute_path, c.PI_IMAGE_DIR)
+    
+    try:
+        with open(new_zstack_json_absolute_path, 'r') as f:
+            zstack_data = json.load(f)
+
+        # Update the zstack name and path
+        zstack_data["zstack_name"] = new_zstack_name
+        zstack_data["zstack_json_path"] = new_zstack_json_relative_path
+        zstack_data["zstack_path"] = new_folder_relative_path
+
+        # Write the updated data back to the JSON file
+        with open(new_zstack_json_absolute_path, 'w') as f:
+            json.dump(zstack_data, f, indent=2)
+
+    except FileNotFoundError as e:
+        print(f"Error: File not found - {e}")
+    except KeyError as e:
+        print(f"Error: Expected key {e} missing in JSON data.")
+    except json.JSONDecodeError as e:
+        print(f"Error: Invalid JSON - {e}")
 
 def append_correction_image_to_json(correction_type, correction_json_path, image_json_path):
     try:

@@ -24,6 +24,7 @@ from json_handler import (
     create_manifest_json,
     append_zstack_metadata_to_manifest,
     populate_zstack_json_from_folder,
+    update_failed_qc_zstack_json,
 )
 import light_controller as lc
 import time
@@ -872,6 +873,25 @@ class Motor:
         self.logger(f"Changing the folder name to: {os.path.basename(new_folder_path)} ")
         os.rename(self.zstack_folder_path, new_folder_path)
 
+        # Update the zStack json in the newly created failed QC folder 
+        # Rename the zstack json file to match the new folder name
+        original_zstack_json_name = f"{os.path.basename(self.zstack_folder_path)}.json"
+        original_zstack_json_path = os.path.join(new_folder_path, original_zstack_json_name)
+        new_zstack_json_name = f"{os.path.basename(new_folder_path)}.json"
+        new_zstack_json_path = os.path.join(new_folder_path, new_zstack_json_name)
+
+        os.rename(original_zstack_json_path, new_zstack_json_path)
+
+        # Update the zstack_name, zstack_json_path, and zstack_path in the zstack JSON file
+        new_zstack_name = f"{os.path.basename(new_folder_path)}"
+        update_failed_qc_zstack_json(new_zstack_name, new_zstack_json_path, new_folder_path)
+
+        # Add the failed QC zstack metadata to the manifest json file
+        manifest_json_path = os.path.join(c.PI_IMAGE_DIR, self.filename.slide_case_folder, "manifest.json")
+        self.logger(f"Appending zstack metadata from {new_zstack_json_path} to manifest.json")
+        append_zstack_metadata_to_manifest(manifest_json_path, new_zstack_json_path)
+
+        # Recreate the original folder path for the next zstack collection to be saved in the correct location
         self.logger(f"Recreating the original folder path: {self.zstack_folder_path}")
         Path(self.zstack_folder_path).mkdir(parents=True, exist_ok=True)
 
