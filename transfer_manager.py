@@ -55,7 +55,7 @@ class TransferWorker(threading.Thread):
                     folder_path = os.path.join(c.PI_IMAGE_DIR, final_folder_name)   
 
                     log_output(f"TransferWorker: starting final upload for {barcode} to {c.REMOTE_RSYNC_PATH}")
-                    success = file_transfer.upload_to_network(folder_path, c.REMOTE_RSYNC_PATH, delete_files=True)
+                    success = file_transfer.upload_to_network(folder_path, c.REMOTE_RSYNC_PATH, delete_files=True, sentinel=True)
                     if success:
                         _done_slides.discard(barcode)  # Remove from done set after successful final upload
                         log_output(f"TransferWorker: final upload successful for {barcode}")
@@ -144,7 +144,7 @@ class TransferWorker(threading.Thread):
                 log_output(f"TransferWorker: uploading {folder_path} to {remote_path}")
 
                 # Use upload_to_laptop_rsync and cleanup later as desired.
-                file_transfer.upload_to_network(folder_path, remote_path, delete_files=False)
+                file_transfer.upload_to_network(folder_path, remote_path, delete_files=False, sentinel=False)
 
                 log_output(f"TransferWorker: upload complete for {_folder_name(folder_path)}")
 

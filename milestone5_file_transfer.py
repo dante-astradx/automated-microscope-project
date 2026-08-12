@@ -278,7 +278,7 @@ class FileTransfer5:
         shutil.copytree(no_light_src, no_light_dest, dirs_exist_ok=True)
         append_correction_metadata_to_manifest("no-light", manifest_json_path, no_light_json_path)
 
-    def upload_to_network(self, folder_absolute_path, rsync_path, delete_files = False):
+    def upload_to_network(self, folder_absolute_path, rsync_path, delete_files=False, sentinel=False):
         folder_name = os.path.basename(folder_absolute_path)
         if not os.path.exists(folder_absolute_path):
             self.logger(f"Folder {folder_absolute_path} does not exist.")
@@ -295,6 +295,16 @@ class FileTransfer5:
             if delete_files:
                 shutil.rmtree(folder_absolute_path)
                 self.logger(f"Deleted local folder {folder_name} after transfer")
+
+            if sentinel:
+                touch_cmd = ["ssh", f"{self.username}@{self.hostname}", f"touch {rsync_path}/{folder_name}/.transfer_complete"]
+                self.logger(f"Sending sentinel file...")
+                try:
+                    subprocess.run(touch_cmd, check=True)
+                    self.logger(f"Sentinel file sent to {rsync_path}/{folder_name}/.transfer_complete")
+                except subprocess.CalledProcessError as e:
+                    self.logger(f"Error sending sentinel file: {e}")
+
             return True
         except subprocess.CalledProcessError as e:
             self.logger(f"Error during rsync copy: {e}")
@@ -341,4 +351,4 @@ if __name__ == "__main__":
     #file.upload_to_network("M5RCT6", rsync_remote, True)
 
     path = f"{c.REMOTE_RSYNC_PATH}"
-    file.upload_to_network(f"{c.PI_IMAGE_DIR}/TEST001_20260807_M1", path, False)
+    file.upload_to_network(f"{c.PI_IMAGE_DIR}/TEST005_20260811_M1", path, False, True)
