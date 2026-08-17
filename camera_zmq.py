@@ -54,7 +54,12 @@ class OutputZMQ(Output):
             self.XX = None
             self.exposure_time = exposure_time
             self.analogue_gain = analogue_gain
-            self.magnification = magnification
+
+            if magnification is not None:
+                self.magnification = f"{magnification}x"
+            else:
+                self.magnification = None
+                
             self.z_height = z_height
 
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")

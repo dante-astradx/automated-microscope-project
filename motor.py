@@ -25,6 +25,7 @@ from json_handler import (
     append_zstack_metadata_to_manifest,
     populate_zstack_json_from_folder,
     update_failed_qc_zstack_json,
+    update_zstack_qc_result,
 )
 import light_controller as lc
 import time
@@ -910,16 +911,23 @@ class Motor:
 
         result = a.check_focus(self.zstack_folder_path, self.current_x, self.current_y, dark_path, back_path)
 
-        # If the QC check passes, append the zstack metadata to the manifest.json file
+        # Paths to the different json files
+        manifest_json_path = os.path.join(c.PI_IMAGE_DIR, self.filename.slide_case_folder, "manifest.json")
+        zstack_json_name = f"{os.path.basename(self.zstack_folder_path)}.json"
+        zstack_json_path = os.path.join(self.zstack_folder_path, zstack_json_name)
+
+        # Add the QC result to the zstack JSON file. Passed or Failed
         if result:
-            # Append the zstack metadata to the manifest.json file
-            manifest_json_path = os.path.join(c.PI_IMAGE_DIR, self.filename.slide_case_folder, "manifest.json")
+            update_qc_result = "Passed"
+            update_zstack_qc_result(zstack_json_path, update_qc_result)
 
-            zstack_json_name = f"{os.path.basename(self.zstack_folder_path)}.json"
-            zstack_json_path = os.path.join(self.zstack_folder_path, zstack_json_name)
-
+            # If the QC check passes, append the zstack metadata to the manifest.json file
             self.logger(f"Appending zstack metadata from {zstack_json_path} to manifest.json")
             append_zstack_metadata_to_manifest(manifest_json_path, zstack_json_path)
+        else:
+            # QC result failed, update the zstack JSON file with the failed QC result
+            update_qc_result = "Failed"
+            update_zstack_qc_result(zstack_json_path, update_qc_result)
 
         return result
 

@@ -70,8 +70,9 @@ def create_zstack_json(working_directory, x_pos, y_pos, fov, obj, smear_id):
         "y_pos": y_pos,
         "fov": fov,
         "smear_id": smear_id,
-        "magnification": obj,
+        "magnification": f"{obj}x",
         "microscope_id": c.MICROSCOPE_ID,
+        "focus_qc_result": None,
         "zstack_images": {
             
         }
@@ -89,7 +90,7 @@ def create_manifest_json(file_transfer):
         "manifest_json_path": json_relative_path,
         "barcode": file_transfer.barcode,
         "slide_case_folder": file_transfer.slide_case_folder,
-        "zstack_metadata": [],
+        "zstack_list": [],
         "no-slide_correction": {},
         "no-light_correction": {}
     }
@@ -215,6 +216,23 @@ def append_image_data_to_zstack_json(zstack_json_path, image_json_path):
     except json.JSONDecodeError as e:
         print(f"Error: Invalid JSON - {e}")
 
+def update_zstack_qc_result(zstack_json_path, qc_result):
+    try:
+        with open(zstack_json_path, 'r') as f:
+            zstack_data = json.load(f)
+
+        zstack_data["focus_qc_result"] = qc_result
+
+        with open(zstack_json_path, 'w') as f:
+            json.dump(zstack_data, f, indent=2)
+
+    except FileNotFoundError as e:
+        print(f"Error: File not found - {e}")
+    except KeyError as e:
+        print(f"Error: Expected key {e} missing in JSON data.")
+    except json.JSONDecodeError as e:
+        print(f"Error: Invalid JSON - {e}")
+
 def append_zstack_metadata_to_manifest(manifest_json_path, zstack_json_path):
     try:
         with open(manifest_json_path, 'r') as f:
@@ -223,7 +241,7 @@ def append_zstack_metadata_to_manifest(manifest_json_path, zstack_json_path):
         with open(zstack_json_path, 'r') as f:
             zstack_data = json.load(f)
 
-        manifest_data["zstack_metadata"].append(zstack_data)
+        manifest_data["zstack_list"].append(zstack_data)
 
         with open(manifest_json_path, 'w') as f:
             json.dump(manifest_data, f, indent=2)

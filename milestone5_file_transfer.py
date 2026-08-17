@@ -104,7 +104,8 @@ class FileTransfer5:
         return file_path
 
     def failed_qc_path_generator(self, focus_view, obj):
-        data_folder = f"{datetime.now()}_{self.slide_case_folder}_unstained_{self.smear_id}_{obj}x_{focus_view}_FAILED_QC"
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        data_folder = f"{timestamp}_{self.slide_case_folder}_unstained_{self.smear_id}_{obj}x_{focus_view}_FAILED_QC"
         file_path = os.path.join(c.PI_IMAGE_DIR, self.slide_case_folder, data_folder)
         self.logger(f"Creating new filepath for failed QC zstack: {file_path}")
 
@@ -351,4 +352,4 @@ if __name__ == "__main__":
     #file.upload_to_network("M5RCT6", rsync_remote, True)
 
     path = f"{c.REMOTE_RSYNC_PATH}"
-    file.upload_to_network(f"{c.PI_IMAGE_DIR}/TEST005_20260811_M1", path, False, True)
+    file.upload_to_network(f"{c.PI_IMAGE_DIR}/TEST019_20260817_M1", path, False, True)
