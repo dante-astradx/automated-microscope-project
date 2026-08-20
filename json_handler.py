@@ -1,5 +1,7 @@
 import json
 import os
+import csv
+import requests
 from datetime import datetime
 import config as c
 
@@ -86,10 +88,14 @@ def create_manifest_json(file_transfer):
     json_absolute_path = os.path.join(working_directory, "manifest.json")
     json_relative_path = os.path.relpath(json_absolute_path, c.PI_IMAGE_DIR)
 
+    strain, organism = get_strain_and_organism_from_barcode(file_transfer.barcode)
+
     data = {
         "manifest_json_path": json_relative_path,
         "barcode": file_transfer.barcode,
         "slide_case_folder": file_transfer.slide_case_folder,
+        "strain": strain,
+        "organism": organism,
         "zstack_list": [],
         "no-slide_correction": {},
         "no-light_correction": {}
@@ -273,7 +279,37 @@ def append_correction_metadata_to_manifest(correction_type, manifest_json_path, 
     except json.JSONDecodeError as e:
         print(f"Error: Invalid JSON - {e}")
 
+def get_strain_and_organism_from_barcode(barcode):
+    csv_url = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQ-18yNc7T6yJ79Gg8bbdWbB53foW-MTEX78LxqIHkHyF5xVFW_b1yPWI5K-vfrsDtZIp8NOsDTUxfh/pub?gid=1047144833&single=true&output=csv"
+    response = requests.get(csv_url)
+    response.raise_for_status()
+    rows = list(csv.reader(response.text.splitlines()))
+    # --- Identify column indices ---
+    header = rows[0]
+    try:
+        col_barcode = header.index("Barcode")
+        col_strain = header.index("Strain")
+        col_organism = header.index("Organism")
+    except ValueError:
+        raise Exception("One or more required columns not found in CSV header.")
+
+    # --- Scan rows ---
+    found_barcode = False
+    for row in rows[1:]:
+        if len(row) <= max(col_barcode, col_strain, col_organism):
+            continue
+        if row[col_barcode].strip() != str(barcode):
+            continue
+        found_barcode = True
+        strain = str(row[col_strain].strip()) or "undefined"
+        organism = str(row[col_organism].strip()) or "undefined"
+        return strain, organism
+
+    if not found_barcode:
+        print(f"Barcode {barcode} not found in CSV.")
+        return "undefined", "undefined"
+
 if __name__ == "__main__":
     pass
-    read_json("/home/microscope_auto/json_results/M5FJMD_20260220_M1_unstained_SM1_10x_1_149x_13y_323z.json")
-    
+    strain, organism = get_strain_and_organism_from_barcode("IDABCD")
+    print(f"Strain: {strain}, Organism: {organism}")

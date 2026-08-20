@@ -352,4 +352,4 @@ if __name__ == "__main__":
     #file.upload_to_network("M5RCT6", rsync_remote, True)
 
     path = f"{c.REMOTE_RSYNC_PATH}"
-    file.upload_to_network(f"{c.PI_IMAGE_DIR}/TEST019_20260817_M1", path, False, True)
+    file.upload_to_network(f"{c.PI_IMAGE_DIR}/TEST005_20260811_M1", path, False, True)

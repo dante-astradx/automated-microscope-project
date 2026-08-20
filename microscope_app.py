@@ -166,7 +166,7 @@ def start():
                     motor_instance.collect_data_xy(smear_ids, coords)
 
                 elif imaging_mode == "Search_Algorithm":
-                    desired_fov = 12
+                    desired_fov = 2
                     fovs = [desired_fov for _ in slide["smears"]]
 
                     generate_barcode_folders(slide["barcode"], slide["smears"], fovs, run_date=run_start_date)
