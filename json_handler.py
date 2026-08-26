@@ -61,8 +61,10 @@ def create_zstack_json(working_directory, x_pos, y_pos, fov, obj, smear_id):
     json_name = f"{zstack_name}.json"
     json_absolute_path = os.path.join(working_directory, json_name)
 
-    json_relative_path = os.path.relpath(json_absolute_path, c.PI_IMAGE_DIR)
-    zstack_relative_path = os.path.relpath(working_directory, c.PI_IMAGE_DIR)
+    zstack_base_path = os.path.dirname(working_directory)
+
+    json_relative_path = os.path.relpath(json_absolute_path, zstack_base_path)
+    zstack_relative_path = os.path.relpath(working_directory, zstack_base_path)
 
     data = {
         "zstack_name": zstack_name,
@@ -105,17 +107,36 @@ def create_manifest_json(file_transfer):
         json.dump(data, file, indent=2)
 
 def update_failed_qc_zstack_json(new_zstack_name, new_zstack_json_absolute_path, new_folder_absolute_path):
-    new_zstack_json_relative_path = os.path.relpath(new_zstack_json_absolute_path, c.PI_IMAGE_DIR)
-    new_folder_relative_path = os.path.relpath(new_folder_absolute_path, c.PI_IMAGE_DIR)
+    new_zstack_base_path = os.path.dirname(new_folder_absolute_path)
+    new_zstack_json_relative_path = os.path.relpath(new_zstack_json_absolute_path, new_zstack_base_path)
+    new_folder_relative_path = os.path.relpath(new_folder_absolute_path, new_zstack_base_path)
     
     try:
         with open(new_zstack_json_absolute_path, 'r') as f:
             zstack_data = json.load(f)
 
+        # Capture the old zstack name before updating it
+        old_zstack_name = zstack_data.get("zstack_name")
+
         # Update the zstack name and path
         zstack_data["zstack_name"] = new_zstack_name
         zstack_data["zstack_json_path"] = new_zstack_json_relative_path
         zstack_data["zstack_path"] = new_folder_relative_path
+
+        # Update image filepaths in zstack_images to reflect the renamed zstack folder
+        if old_zstack_name and "zstack_images" in zstack_data:
+            for image_data in zstack_data["zstack_images"].values():
+                if isinstance(image_data, dict) and "image_filepath" in image_data:
+                    old_path = image_data["image_filepath"]
+                    norm_path = os.path.normpath(old_path)
+                    parts = norm_path.split(os.sep)
+                    if parts and parts[0] == old_zstack_name:
+                        parts[0] = new_zstack_name
+                        image_data["image_filepath"] = os.path.join(*parts)
+                    elif parts:
+                        image_data["image_filepath"] = os.path.join(new_zstack_name, norm_path)
+                    else:
+                        image_data["image_filepath"] = new_zstack_name
 
         # Write the updated data back to the JSON file
         with open(new_zstack_json_absolute_path, 'w') as f:

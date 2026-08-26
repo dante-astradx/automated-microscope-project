@@ -34,6 +34,8 @@ class OutputZMQ(Output):
 
         self.current_tif_path = None
         self.current_json_path = None
+        self.current_base_path = None
+        self.rel_tif_path = None
         self.save_in_progress = False
         self.exposure_time = None
         self.analogue_gain = None
@@ -63,8 +65,10 @@ class OutputZMQ(Output):
             self.z_height = z_height
 
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            self.current_base_path = os.path.dirname(folder_path)
             self.current_tif_path = os.path.join(folder_path, f"{filename_base}.tif")
             self.current_json_path = os.path.join(folder_path, f"{filename_base}.json")
+            self.rel_tif_path = os.path.relpath(self.current_tif_path, self.current_base_path)
 
             if self.verbose:
                 print(f"Accumlation target filename set to {self.current_tif_path}")
@@ -144,6 +148,10 @@ class OutputZMQ(Output):
             tfw.write(pmean.astype(np.float32))
             tfw.write(pvar.astype(np.float32))
 
+        #rel_tif_path = os.path.relpath(self.current_tif_path, self.current_base_path)
+        #if os.path.normpath(rel_tif_path) == ".":
+            #rel_tif_path = None
+
         with open(self.current_json_path, "w") as fp:  # Use dynamic filename
             json.dump({"camera": c.CAMERA,
                        "sensor": c.SENSOR,
@@ -155,6 +163,7 @@ class OutputZMQ(Output):
                        "time": time.time() - self.startTime,
                        "data_timestamp": datetime.now().strftime("%Y%m%d_%H%M%S"),
                        "image_filename": os.path.basename(self.current_tif_path),
+                       "image_filepath": self.rel_tif_path,
                        "magnification": self.magnification,
                        "z_height": self.z_height},
                       fp)  # Record final filename in metadata
