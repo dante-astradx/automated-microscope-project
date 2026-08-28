@@ -720,7 +720,7 @@ class Motor:
 
                 # code logic for implementation with the focus check QC
                 #stages = [(self.collect_data_with_10x, "10x", None), (self.collect_data_with_20x_40x, "20x", 2), (self.collect_data_with_20x_40x, "40x", 3)]
-                stages = [(self.collect_data_with_10x, "10x", None), (self.collect_data_with_20x_40x, "40x", 3)]
+                stages = [(self.collect_data_with_20x_40x, "20x", 2), (self.collect_data_with_20x_40x, "40x", 3)]
                 #stages = [(self.collect_data_with_20x_40x, "40x", 3)]
                 for collect_func, name, arg in stages:
                     passed_qc = False
@@ -812,7 +812,7 @@ class Motor:
 
                         # code logic for implementation with the focus check QC
                         #stages = [(self.collect_data_with_10x, "10x", None), (self.collect_data_with_20x_40x, "20x", 2), (self.collect_data_with_20x_40x, "40x", 3)]
-                        stages = [(self.collect_data_with_10x, "10x", None), (self.collect_data_with_20x_40x, "40x", 3)]
+                        stages = [(self.collect_data_with_10x, "20x", 2), (self.collect_data_with_20x_40x, "40x", 3)]
                         #stages = [(self.collect_data_with_20x_40x, "40x", 3)]
                         for collect_func, name, arg in stages:
                             passed_qc = False

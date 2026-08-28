@@ -166,11 +166,11 @@ class Camera:
 
 if __name__ == "__main__":
    imager = Camera()
-   #imager.set_exposure_time(11000)
-   #time.sleep(5)
+   #imager.set_exposure_time(c.EXPOSURE_TIME_20X)
+   #time.sleep(1)
 
-   filename = "M5NBMH_20251105_M1_unstained_SM3_40x_1_113x_21y_NAz"
+   filename = "WET-MOUNT_TEST1_M1"
    #file_path = os.path.join(c.PI_IMAGE_DIR, "no-light_20250919_M1", "no-light_20250919_M1_10x")
-   imager.take_rpi_image(100, filename)
+   imager.take_rpi_image(1, filename)
    time.sleep(15)
 
