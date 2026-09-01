@@ -99,8 +99,8 @@ def create_manifest_json(file_transfer):
         "slide_case_folder": file_transfer.slide_case_folder,
         "strain": strain,
         "organism": organism,
-        "imaged-on": utc_timestamp,
-        "slide-version": slide_version,
+        "imaged_on": utc_timestamp,
+        "slide_version": slide_version,
         "zstack_list": [],
         "no-slide_correction": {},
         "no-light_correction": {}
