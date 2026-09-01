@@ -2,7 +2,7 @@ import json
 import os
 import csv
 import requests
-from datetime import datetime
+from datetime import datetime, UTC
 import config as c
 
 def read_json(json_path):
@@ -90,7 +90,8 @@ def create_manifest_json(file_transfer):
     json_absolute_path = os.path.join(working_directory, "manifest.json")
     json_relative_path = os.path.relpath(json_absolute_path, c.PI_IMAGE_DIR)
 
-    strain, organism = get_strain_and_organism_from_barcode(file_transfer.barcode)
+    utc_timestamp = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    strain, organism, slide_version = get_strain_and_organism_from_barcode(file_transfer.barcode)
 
     data = {
         "manifest_json_path": json_relative_path,
@@ -98,6 +99,8 @@ def create_manifest_json(file_transfer):
         "slide_case_folder": file_transfer.slide_case_folder,
         "strain": strain,
         "organism": organism,
+        "imaged-on": utc_timestamp,
+        "slide-version": slide_version,
         "zstack_list": [],
         "no-slide_correction": {},
         "no-light_correction": {}
@@ -311,24 +314,26 @@ def get_strain_and_organism_from_barcode(barcode):
         col_barcode = header.index("Barcode")
         col_strain = header.index("Strain")
         col_organism = header.index("Organism")
+        col_slide_version = header.index("Slide Version")
     except ValueError:
         raise Exception("One or more required columns not found in CSV header.")
 
     # --- Scan rows ---
     found_barcode = False
     for row in rows[1:]:
-        if len(row) <= max(col_barcode, col_strain, col_organism):
+        if len(row) <= max(col_barcode, col_strain, col_organism, col_slide_version):
             continue
         if row[col_barcode].strip() != str(barcode):
             continue
         found_barcode = True
         strain = str(row[col_strain].strip()) or "undefined"
         organism = str(row[col_organism].strip()) or "undefined"
-        return strain, organism
+        slide_version = str(row[col_slide_version].strip()) or "undefined"
+        return strain, organism, slide_version
 
     if not found_barcode:
         print(f"Barcode {barcode} not found in CSV.")
-        return "undefined", "undefined"
+        return "undefined", "undefined", "undefined"
 
 if __name__ == "__main__":
     pass
