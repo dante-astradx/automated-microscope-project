@@ -32,6 +32,7 @@ import time
 import math
 from pathlib import Path
 from transfer_manager import enqueue_folder, mark_slide_done
+from folder_generator import generate_barcode_folders
 
 class Motor:
     def __init__(self, filename, logger=print):
@@ -860,11 +861,74 @@ class Motor:
         self.stop_imaging()
 
         # move x-y axis to position that allows for easier removal of slides only if 2nd slide was imaged
-        if self.slide_y_offset == 25: # this is how we determine if 2nd slide was being imaged
+        if self.slide_y_offset == 25: # this is how we determine if 2nd slide was imaged
             self.move_x_axis(130)
             self.move_y_axis(15)
         else:
             pass
+
+    def collect_data_manual_fov(self, x_pos, y_pos, objectives, smear_id):
+        """Image a single FOV at the supplied (x, y) without moving X/Y motors.
+
+        The caller must initialize the FileTransfer5 instance and set the barcode
+        before calling this method. Folders, manifest, z-stacks, QC, and transfer
+        are all handled inside this method.
+        """
+        self.start_imaging()
+
+        self.set_smear_id(smear_id)
+        self.focus_view = 1
+
+        # Use the supplied coordinates without moving the X/Y motors
+        self.current_x = x_pos
+        self.current_y = y_pos
+
+        # Generate folder structure for this barcode / smear / single FOV
+        generate_barcode_folders(
+            self.filename.barcode,
+            [smear_id],
+            [1],
+            run_date=self.filename.date,
+        )
+
+        # Create the manifest for this barcode run
+        create_manifest_json(self.filename)
+
+        # Run a 10x focus-preset scan at the current position
+        self.move_carousel("1")
+        coarse_z_focus, coarse_max_score, focus_scores = self.focus_scan(0, 600, 20)
+        _, max_score = max(focus_scores, key=lambda x: x[1])
+        _, min_score = min(focus_scores, key=lambda x: x[1])
+        self.maybe_trigger_auto_stop("manual_preset_coarse", coarse_max_score, {"smear": smear_id, "obj": 10, "fov": 1})
+
+        if (max_score - min_score) > 10.0:
+            self.focus_preset_10x = coarse_z_focus - 60
+        else:
+            self.focus_preset_10x = coarse_z_focus - 40
+        self.focus_preset_20x = self.focus_preset_10x + c.FOCUS_OFFSET_20X_FROM_10X_PRESET
+        self.focus_preset_40x = self.focus_preset_10x + c.FOCUS_OFFSET_40X_FROM_10X_PRESET
+        self.logger(f"Manual FOV focus presets set - 10x: {self.focus_preset_10x}, 20x: {self.focus_preset_20x}, 40x: {self.focus_preset_40x}")
+
+        # Collect z-stacks for each requested objective
+        for obj in objectives:
+            self.check_stop()
+
+            if obj == 10:
+                self.collect_data_with_10x()
+            elif obj == 20:
+                self.collect_data_with_20x_40x(2)
+            elif obj == 40:
+                self.collect_data_with_20x_40x(3)
+            else:
+                self.logger(f"Objective {obj}x is not supported. Skipping.")
+                continue
+
+            self.initiate_transfer_queue(self.focus_view, self.obj)
+
+        self.logger("Manual FOV data collection finished. All images have been taken and saved to Images folder")
+        self.filename.copy_correction_folders_to_slide_case()
+        mark_slide_done(self.filename.barcode, self.filename.date)
+        self.stop_imaging()
 
     def handle_failed_qc(self):
         self.logger(f"Zstack failed QC at path: {self.zstack_folder_path}")
