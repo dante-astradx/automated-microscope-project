@@ -867,7 +867,7 @@ class Motor:
         else:
             pass
 
-    def collect_data_manual_fov(self, x_pos, y_pos, objectives, smear_id):
+    def collect_data_manual_fov(self, x_pos, y_pos, objectives, smear_id, fov_target, transfer=False):
         """Image a single FOV at the supplied (x, y) without moving X/Y motors.
 
         The caller must initialize the FileTransfer5 instance and set the barcode
@@ -877,7 +877,7 @@ class Motor:
         self.start_imaging()
 
         self.set_smear_id(smear_id)
-        self.focus_view = 1
+        self.focus_view = fov_target
 
         # Use the supplied coordinates without moving the X/Y motors
         self.current_x = x_pos
@@ -887,7 +887,7 @@ class Motor:
         generate_barcode_folders(
             self.filename.barcode,
             [smear_id],
-            [1],
+            [self.focus_view],
             run_date=self.filename.date,
         )
 
@@ -923,11 +923,13 @@ class Motor:
                 self.logger(f"Objective {obj}x is not supported. Skipping.")
                 continue
 
-            self.initiate_transfer_queue(self.focus_view, self.obj)
+            if transfer:
+                self.initiate_transfer_queue(self.focus_view, self.obj)
 
         self.logger("Manual FOV data collection finished. All images have been taken and saved to Images folder")
-        self.filename.copy_correction_folders_to_slide_case()
-        mark_slide_done(self.filename.barcode, self.filename.date)
+        if transfer:
+            self.filename.copy_correction_folders_to_slide_case()
+            mark_slide_done(self.filename.barcode, self.filename.date)
         self.stop_imaging()
 
     def handle_failed_qc(self):
@@ -1114,8 +1116,9 @@ class Motor:
 if __name__ == "__main__":
     pass
     file = FileTransfer5()
-    file.set_barcode("TEST001")
+    file.set_barcode("RAMYYY")
     motor = Motor(filename = file)
+    motor.collect_data_manual_fov(126, 15, [20, 40], "SM1", 1, transfer=False)
 
     # --- Exposure Time Pre-set Test ---
     #motor.home_carousel()
@@ -1145,10 +1148,10 @@ if __name__ == "__main__":
     #motor.move_carousel("2")
 
     # --- Basic Motor Control Test ---
-    motor.home_axis("X, Y")
+    #motor.home_axis("X, Y")
     #motor.move_x_axis(c.SLIDE_1_SM3_CENTER_X)
     #motor.move_y_axis(c.SLIDE_1_CENTER_Y)
-    motor.move_x_axis(137)
-    motor.move_y_axis(13.5)
+    #motor.move_x_axis(137)
+    #motor.move_y_axis(13.5)
     #motor.move_z_axis(200)
     #motor.move_carousel("3")

@@ -337,5 +337,5 @@ def get_strain_and_organism_from_barcode(barcode):
 
 if __name__ == "__main__":
     pass
-    strain, organism = get_strain_and_organism_from_barcode("IDABCD")
+    strain, organism, slide_version = get_strain_and_organism_from_barcode("IDABCD")
     print(f"Strain: {strain}, Organism: {organism}")
