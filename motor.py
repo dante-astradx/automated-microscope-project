@@ -932,6 +932,96 @@ class Motor:
             mark_slide_done(self.filename.barcode, self.filename.date)
         self.stop_imaging()
 
+    def collect_exposure_series_manual_fov(
+        self, x_pos, y_pos, z_pos, magnification, smear_id, fov_number
+    ):
+        """Capture 100 separate one-frame images at a manually positioned FOV.
+
+        X, Y, and Z are recorded as image metadata; the corresponding stage axes
+        are not moved. The objective carousel is moved to the requested 20x or
+        40x magnification. Images use the standard data filename and folder
+        schema, with ``_image1`` through ``_image100`` appended to each name.
+        """
+        if magnification not in (20, 40):
+            raise ValueError("Exposure-series capture supports 20x and 40x only")
+        if fov_number < 1:
+            raise ValueError("fov_number must be at least 1")
+
+        self.focus_view = fov_number
+        self.current_x = x_pos
+        self.current_y = y_pos
+        self.current_z = z_pos
+        self.set_smear_id(smear_id)
+
+        # Reuse the current folder schema; do not add any magnification folders.
+        generate_barcode_folders(
+            self.filename.barcode,
+            [smear_id],
+            [fov_number],
+            run_date=self.filename.date,
+        )
+        create_manifest_json(self.filename)
+
+        image_filenames = []
+        self.start_imaging()
+        try:
+            carousel_position = "2" if magnification == 20 else "3"
+            self.move_carousel(carousel_position)
+
+            base_filename, file_path = self.filename.data_filename_generator(
+                fov_number, magnification, x_pos, y_pos, z_pos
+            )
+
+            for image_number in range(1, 101):
+                self.check_stop()
+                image_filename = f"{base_filename}_image{image_number}"
+                tif_path = os.path.join(file_path, f"{image_filename}.tif")
+                json_path = os.path.join(file_path, f"{image_filename}.json")
+                previous_stamps = {
+                    path: os.stat(path).st_mtime_ns if os.path.exists(path) else None
+                    for path in (tif_path, json_path)
+                }
+
+                self.logger(
+                    f"Capturing image {image_number}/100 at {magnification}x: "
+                    f"{image_filename}"
+                )
+                self.imager.take_rpi_image(
+                    1,
+                    image_filename,
+                    file_path,
+                    z_height=z_pos,
+                    magnification=magnification,
+                )
+
+                # Camera capture is asynchronous. Wait for this image's TIFF and
+                # metadata JSON before submitting the next capture request.
+                deadline = time.monotonic() + 60
+                while True:
+                    self.check_stop()
+                    current_stamps = {
+                        path: os.stat(path).st_mtime_ns if os.path.exists(path) else None
+                        for path in (tif_path, json_path)
+                    }
+                    if all(
+                        current_stamps[path] is not None
+                        and current_stamps[path] != previous_stamps[path]
+                        for path in (tif_path, json_path)
+                    ):
+                        break
+                    if time.monotonic() >= deadline:
+                        raise TimeoutError(
+                            f"Timed out waiting for camera output for {image_filename}"
+                        )
+                    time.sleep(0.1)
+
+                image_filenames.append(image_filename)
+
+            self.logger("100-image exposure series complete")
+            return image_filenames
+        finally:
+            self.stop_imaging()
+
     def handle_failed_qc(self):
         self.logger(f"Zstack failed QC at path: {self.zstack_folder_path}")
 
@@ -1116,9 +1206,10 @@ class Motor:
 if __name__ == "__main__":
     pass
     file = FileTransfer5()
-    file.set_barcode("RAMYYY")
+    file.set_barcode("no-slide")
     motor = Motor(filename = file)
-    motor.collect_data_manual_fov(126, 15, [20, 40], "SM1", 1, transfer=False)
+    #motor.collect_data_manual_fov(126, 15, [20, 40], "SM1", 1, transfer=False)
+    motor.collect_exposure_series_manual_fov(135, 14, 300, 40, "SM1", 1)
 
     # --- Exposure Time Pre-set Test ---
     #motor.home_carousel()
