@@ -107,7 +107,7 @@ class Camera:
         self.send_command(
             {"command": "accumulate", "nframes": nframes, "filename": filename, "file_path": file_path, "z_height": z_height, "magnification": magnification}
         )
-        time.sleep(1)
+        #time.sleep(1)
 
     def get_status(self):
         status = self.send_command({"command": "status"})

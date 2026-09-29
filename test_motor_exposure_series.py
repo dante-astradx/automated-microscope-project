@@ -78,3 +78,85 @@ class TestManualFovExposureSeries:
                 130, 15, 350, 10, "SM1", 1
             )
         instance.start_imaging.assert_not_called()
+
+
+class TestCollectMotionBlurData(TestManualFovExposureSeries):
+    def _make_motion_blur_motor(self, tmp_path):
+        instance = self._make_motor(tmp_path)
+        instance.filename.data_path_generator.return_value = str(tmp_path)
+        instance.filename.data_filename_generator.side_effect = (
+            lambda fov, objective, x, y, z: (
+                f"TEST001_20260101_M1_unstained_SM2_{objective}x_{fov}_"
+                f"{x}x_{y}y_{z}z",
+                str(tmp_path),
+            )
+        )
+
+        def capture_multiple_frames(nframes, filename, file_path, **kwargs):
+            assert nframes > 0
+            (tmp_path / f"{filename}.tif").write_bytes(b"tif")
+            (tmp_path / f"{filename}.json").write_text('{"frames": %d}' % nframes)
+
+        instance.imager.take_rpi_image.side_effect = capture_multiple_frames
+        return instance
+
+    def test_captures_requested_accumulations_and_applies_exposure_after_objective(self, tmp_path):
+        instance = self._make_motion_blur_motor(tmp_path)
+        call_order = []
+        instance.move_carousel.side_effect = lambda position: call_order.append(("carousel", position))
+        instance.imager.set_exposure_time.side_effect = lambda value: call_order.append(("exposure", value))
+
+        with patch("motor.generate_barcode_folders") as generate_folders, \
+             patch("motor.create_manifest_json") as create_manifest, \
+             patch("motor.create_zstack_json") as create_zstack, \
+             patch("motor.time.sleep"):
+            names = instance.collect_motion_blur_data(
+                x_pos=130,
+                y_pos=15,
+                z_pos=350,
+                magnification=40,
+                smear_id="SM2",
+                fov_number=2,
+                nframes=4,
+                image_count=3,
+                exposure_time=25000,
+            )
+
+        assert len(names) == 3
+        assert names[0].endswith("_image1")
+        assert names[-1].endswith("_image3")
+        assert instance.imager.take_rpi_image.call_count == 3
+        assert all(call.args[0] == 4 for call in instance.imager.take_rpi_image.call_args_list)
+        assert all(call.kwargs["z_height"] == 350 for call in instance.imager.take_rpi_image.call_args_list)
+        assert all(call.kwargs["magnification"] == 40 for call in instance.imager.take_rpi_image.call_args_list)
+        assert call_order == [("carousel", "3"), ("exposure", 25000)]
+        generate_folders.assert_called_once_with(
+            "TEST001", ["SM2"], [2], run_date="20260101"
+        )
+        create_manifest.assert_called_once_with(instance.filename)
+        create_zstack.assert_called_once_with(str(tmp_path), 130, 15, 2, 40, "SM2")
+        assert (tmp_path / f"{names[0]}.json").exists()
+
+    def test_omitted_coordinates_use_na_in_names_and_skip_exposure_override(self, tmp_path):
+        instance = self._make_motion_blur_motor(tmp_path)
+        with patch("motor.generate_barcode_folders"), \
+             patch("motor.create_manifest_json"), \
+             patch("motor.create_zstack_json") as create_zstack, \
+             patch("motor.time.sleep"):
+            names = instance.collect_motion_blur_data(
+                smear_id="SM2", image_count=1
+            )
+
+        assert "_NAx_NAy_NAz_image1" in names[0]
+        assert instance.imager.take_rpi_image.call_args.args[0] == 1
+        instance.imager.set_exposure_time.assert_not_called()
+        create_zstack.assert_called_once_with(
+            str(tmp_path), None, None, 1, 40, "SM2"
+        )
+        assert (tmp_path / f"{names[0]}.json").read_text() == '{"frames": 1}'
+
+    def test_rejects_invalid_capture_parameters_before_imaging(self, tmp_path):
+        instance = self._make_motion_blur_motor(tmp_path)
+        with pytest.raises(ValueError, match="nframes"):
+            instance.collect_motion_blur_data(smear_id="SM2", nframes=0)
+        instance.start_imaging.assert_not_called()

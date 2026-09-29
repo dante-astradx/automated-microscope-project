@@ -1022,6 +1022,146 @@ class Motor:
         finally:
             self.stop_imaging()
 
+    def collect_motion_blur_data(
+        self,
+        x_pos=None,
+        y_pos=None,
+        z_pos=None,
+        magnification=40,
+        smear_id=None,
+        fov_number=1,
+        nframes=1,
+        image_count=100,
+        exposure_time=None,
+    ):
+        """Capture consecutive multi-frame averages for motion-blur analysis.
+
+        The slide barcode must already be set on ``self.filename``. X, Y, and Z
+        are metadata only; omitted coordinates are stored as JSON null and
+        represented as ``NA`` in image filenames. Each saved image accumulates
+        ``nframes`` camera frames using the existing camera behavior. Individual
+        image JSON files are retained and are not consolidated into the z-stack
+        JSON.
+        """
+        if magnification not in (20, 40):
+            raise ValueError("Motion-blur capture supports 20x and 40x only")
+        if not isinstance(smear_id, str) or not smear_id:
+            raise ValueError("smear_id must be provided")
+        if isinstance(fov_number, bool) or not isinstance(fov_number, int) or fov_number < 1:
+            raise ValueError("fov_number must be a positive integer")
+        if isinstance(nframes, bool) or not isinstance(nframes, int) or nframes < 1:
+            raise ValueError("nframes must be a positive integer")
+        if isinstance(image_count, bool) or not isinstance(image_count, int) or image_count < 1:
+            raise ValueError("image_count must be a positive integer")
+        if exposure_time is not None and (
+            isinstance(exposure_time, bool)
+            or not isinstance(exposure_time, int)
+            or exposure_time <= 0
+        ):
+            raise ValueError("exposure_time must be a positive integer in microseconds")
+
+        self.focus_view = fov_number
+        self.current_x = x_pos
+        self.current_y = y_pos
+        self.current_z = z_pos
+        self.set_smear_id(smear_id)
+
+        # Use the current barcode/smear/FOV/objective folder schema unchanged.
+        generate_barcode_folders(
+            self.filename.barcode,
+            [smear_id],
+            [fov_number],
+            run_date=self.filename.date,
+        )
+        create_manifest_json(self.filename)
+
+        zstack_folder_path = self.filename.data_path_generator(fov_number, magnification)
+        create_zstack_json(
+            zstack_folder_path,
+            x_pos,
+            y_pos,
+            fov_number,
+            magnification,
+            smear_id,
+        )
+
+        # Preserve numeric coordinate tokens when supplied, and use NA for
+        # missing coordinates without changing FileTransfer5's naming schema.
+        filename_x = "NA" if x_pos is None else x_pos
+        filename_y = "NA" if y_pos is None else y_pos
+        filename_z = "NA" if z_pos is None else z_pos
+        base_filename, file_path = self.filename.data_filename_generator(
+            fov_number,
+            magnification,
+            filename_x,
+            filename_y,
+            filename_z,
+        )
+
+        image_filenames = []
+        self.start_imaging()
+        try:
+            carousel_position = "2" if magnification == 20 else "3"
+            self.move_carousel(carousel_position)
+
+            # move_carousel/set_objective sets the objective's default exposure;
+            # an explicit experiment exposure must be applied afterward.
+            if exposure_time is not None:
+                self.imager.set_exposure_time(exposure_time)
+
+            for image_number in range(1, image_count + 1):
+                self.check_stop()
+                image_filename = f"{base_filename}_image{image_number}"
+                tif_path = os.path.join(file_path, f"{image_filename}.tif")
+                json_path = os.path.join(file_path, f"{image_filename}.json")
+                previous_stamps = {
+                    path: os.stat(path).st_mtime_ns if os.path.exists(path) else None
+                    for path in (tif_path, json_path)
+                }
+
+                self.logger(
+                    f"Capturing motion-blur image {image_number}/{image_count} "
+                    f"at {magnification}x using {nframes} frame(s): {image_filename}"
+                )
+                self.imager.take_rpi_image(
+                    nframes,
+                    image_filename,
+                    file_path,
+                    z_height=z_pos,
+                    magnification=magnification,
+                )
+
+                # take_rpi_image starts asynchronous accumulation. Wait for this
+                # image to finish writing before starting the next accumulation.
+                deadline = time.monotonic() + 60
+                while True:
+                    self.check_stop()
+                    current_stamps = {
+                        path: os.stat(path).st_mtime_ns if os.path.exists(path) else None
+                        for path in (tif_path, json_path)
+                    }
+                    if all(
+                        current_stamps[path] is not None
+                        and current_stamps[path] != previous_stamps[path]
+                        for path in (tif_path, json_path)
+                    ):
+                        break
+                    if time.monotonic() >= deadline:
+                        raise TimeoutError(
+                            f"Timed out waiting for camera output for {image_filename}"
+                        )
+                    time.sleep(0.1)
+
+                image_filenames.append(image_filename)
+
+            self.logger(
+                f"Motion-blur capture complete: {image_count} images, "
+                f"{nframes} frame(s) per image"
+            )
+            return image_filenames
+        finally:
+            self.stop_imaging()
+
     def handle_failed_qc(self):
         self.logger(f"Zstack failed QC at path: {self.zstack_folder_path}")
 
@@ -1206,10 +1346,10 @@ class Motor:
 if __name__ == "__main__":
     pass
     file = FileTransfer5()
-    file.set_barcode("no-slide")
+    file.set_barcode("IDWEUM")
     motor = Motor(filename = file)
     #motor.collect_data_manual_fov(126, 15, [20, 40], "SM1", 1, transfer=False)
-    motor.collect_exposure_series_manual_fov(135, 14, 300, 40, "SM1", 1)
+    motor.collect_exposure_series_manual_fov(131, 13, 300, 40, "SM2", 1)
 
     # --- Exposure Time Pre-set Test ---
     #motor.home_carousel()
