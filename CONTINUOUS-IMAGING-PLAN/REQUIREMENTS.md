@@ -34,10 +34,13 @@ an implementation already completed.
    `_image2`, etc.) and a JSON sidecar for every TIFF.
 6. **Preserve pixel data representation.** TIFF output is one float32 mean-image
    page per output image, in the existing full-resolution RGGB/Bayer mosaic
-   spatial arrangement. Do not demosaic, resize, crop, color-convert, or apply
-   lossy compression in the scientific output path. Document and validate the
-   actual raw input packing/bit depth separately; the existing camera config is
-   `SRGGB12` and callback currently reads samples as `uint16`.
+   spatial arrangement. Do not demosaic, resize, color-convert, or apply lossy
+   compression in the scientific output path. Remove only the raw buffer's row
+   padding: crop each frame to the 4056-column active width (the buffer row is
+   4064 samples), as the live preview already does. The active width is a
+   parameter, not a hard-coded value. Document and validate the actual raw input
+   packing/bit depth separately; the existing camera config is `SRGGB12` and the
+   callback currently reads samples as `uint16`.
 7. **Do not write a variance page.** Variance is not used by this experiment and
    should not be produced for this new capture path. Existing capture behavior
    remains unchanged unless separately approved.
@@ -65,7 +68,7 @@ an implementation already completed.
 
 - Use a **bounded** queue/buffer pool. Queue capacity is a configurable,
   documented safety limit, not an unbounded attempt to hide insufficient write
-  throughput.
+  throughput. The default capacity is 3 images.
 - A completed image submitted to the writer must be independent of arrays reused
   for subsequent accumulation. Prefer a distinct float32 mean array per result;
   the active sum buffer can then be reset/reused.

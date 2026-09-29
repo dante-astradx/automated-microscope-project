@@ -19,7 +19,10 @@ before using the output for scientific conclusions.
   skipped, or shared between neighboring outputs.
 - Assert no additional callback/frame is needed to finalize a group.
 - Assert the new TIFF payload has one float32 page and no variance page.
-- Test largest supported `nframes` against accumulator dtype/overflow policy.
+- Assert frames wider than the active width are cropped to the configured width
+  (default 4056) and that padding columns never reach the output.
+- Test `nframes` values against the `uint32` accumulator; there is no configured
+  `nframes` cap, so confirm correct means for the intended range.
 
 ### Buffer ownership and writer
 
@@ -90,13 +93,16 @@ writer completion timing.
 
 - At `nframes=1`, compare the new float32 output against the current saved mean
   page for the same raw input frame, allowing only documented representation
-  differences.
+  differences. The legacy page is 4064 columns wide; compare against its first
+  4056 columns.
+- Confirm on hardware that the raw buffer row length is 4064 samples and that
+  columns 4056–4063 contain padding, not sensor data.
 - At `nframes>1`, compare calculated means against an offline mean from retained
   sample input frames or a deterministic fixture.
 - Confirm no demosaic, resize, crop, color conversion, or lossy compression has
   entered the scientific output path.
-- Confirm there is exactly one TIFF page, float32, at full dimensions, and that
-  the variance page is absent only in the new path.
+- Confirm there is exactly one TIFF page, float32, at 3040 × 4056, and that the
+  variance page is absent only in the new path.
 
 ## Acceptance criteria
 

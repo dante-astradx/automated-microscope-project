@@ -51,8 +51,12 @@ been implemented.
 - Save under the current generated slide case and FOV/objective directory.
 - Each output image has its own TIFF and JSON sidecar; no multipage movie TIFF.
 - TIFF contains one full-resolution float32 mean-image page in RGGB/Bayer spatial
-  order. No variance page, demosaicing, rescaling, color conversion, or lossy
-  compression in the scientific output path.
+  order, 3040 × 4056. No variance page, demosaicing, rescaling, color conversion,
+  or lossy compression in the scientific output path.
+- The raw buffer's 8 columns of row padding are cropped, so new TIFFs are 4056
+  columns wide. Legacy accumulate TIFFs are 4064 columns wide because they keep
+  the padding. When comparing old and new data, use the first 4056 columns of
+  the legacy images.
 - Filenames retain the standard `FileTransfer5` image basename with a sequential
   `_imageN` suffix (for example `_image1`, `_image2`). Missing coordinate tokens
   use `NA`; corresponding metadata values are JSON `null`.

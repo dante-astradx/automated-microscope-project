@@ -174,20 +174,38 @@ exposure, gain, magnification, Z, and timestamps). Do not put a reference to a
 sum array that is reset/reused by the callback.
 
 The initial design is a single writer to preserve file ordering and reduce
-storage contention. Queue size is configured in **images**, and capacity should
-be selected using measured RAM headroom, not an arbitrary large maximum. Account
-for one image currently being written in addition to the queued images. A full
-queue must trigger the defined overload policy; no silent frame drops.
+storage contention. Queue size is configured in **images**. The default capacity
+is **3 images**, and it is a configurable constructor parameter so hardware tests
+can raise or lower it. Choose operational values from measured RAM headroom and
+queue growth, not an arbitrary large maximum. Account for one image currently
+being written in addition to the queued images. A full queue must trigger the
+defined overload policy; no silent frame drops.
 
-For 4056 × 3040 pixels, one float32 output mean is about 49 MB (47 MiB). Peak
-memory is higher than queue capacity times this amount because of active sums,
-input/camera buffers, and writer temporaries. Measure actual resident memory on
-the Raspberry Pi.
+For 4056 × 3040 pixels, one float32 output mean is about 49 MB (47 MiB), so the
+default 3 queued images hold about 141 MiB of mean arrays. Peak memory is higher
+than queue capacity times this amount because of active sums, input/camera
+buffers, and writer temporaries. Measure actual resident memory on the Raspberry
+Pi.
 
 ### 5. Pixel and TIFF data path
 
 - Continue using the current full-resolution RGGB/Bayer pixel arrangement; no
-  demosaicing, cropping, resizing, color conversion, or lossy compression.
+  demosaicing, resizing, color conversion, or lossy compression.
+- **Row padding is cropped to the active image width (resolved).** Each raw row
+  in the callback buffer is 4064 `uint16` samples wide: 4056 active pixels plus
+  8 samples of row padding (stride). The legacy path saves all 4064 columns,
+  including the padding (confirmed from saved TIFFs of shape (3040, 4064)). The
+  new series path crops each frame to the first 4056 columns, matching what the
+  live-preview `get_reduced_im()` already does. This removes only padding, not
+  sensor pixels, and the column offset keeps the RGGB Bayer phase unchanged.
+  The active width is a constructor parameter (default 4056) rather than a
+  hard-coded value.
+- Consequence: new-path TIFFs are (3040, 4056) while legacy TIFFs are
+  (3040, 4064). Comparisons against legacy output (for example the `nframes=1`
+  equivalence check) must compare only the first 4056 columns of the legacy data.
+- Hardware validation must confirm the stride on the deployed camera: that the
+  buffer row length is 4064 samples and that columns 4056–4063 carry no sensor
+  data.
 - Preserve float32 mean-image TIFF data. New path writes one TIFF page per output
   file and omits variance by design.
 - `nframes` is any positive integer; the new series path has no configured
@@ -317,7 +335,18 @@ commands explicitly.
   clock date/time metadata as a separate field when needed. The camera sensor
   timestamp remains the source for per-input-frame cadence, as resolved above.
 
+### Queue capacity and overload response — resolved for initial implementation
+
+- Default writer-queue capacity is 3 images, configurable per series. It is a
+  conservative starting value for hardware testing, not a tuned limit.
+- Overload policy: if a completed image cannot be placed on the queue because
+  the queue is full, the series enters the terminal `OVERLOADED` state with a
+  latched error. The image that could not be queued is not counted as written,
+  capture stops, and images already queued are still written and reported.
+- The operational capacity will be chosen from hardware measurements of queue
+  growth, process RSS, and system available RAM.
+
 ## Remaining open technical decisions before implementation
 
-- Queue capacity and exact overload response based on measured sustained storage
-  throughput and safe RAM headroom.
+- None for the hardware-independent core (phases 2–3). Operational queue
+  capacity is tuned during hardware characterization (phase 6).

@@ -109,6 +109,53 @@ class Camera:
         )
         #time.sleep(1)
 
+    # --- Continuous series capture ---------------------------------------------
+    # Start-and-poll protocol: start_series() returns once the camera service has
+    # accepted (or rejected) the request; poll series_status() until the reply's
+    # "is_terminal" is true. Acceptance does not mean the images are saved.
+
+    def _send_series_command(self, msg):
+        # send_command() drops its socket after a timeout and returns a
+        # "timeout" reply. Reconnect here so one slow reply does not end series
+        # polling; the legacy send_command() behavior is left unchanged.
+        if self.zmqSocket is None:
+            self.start_zmq()
+        return self.send_command(msg)
+
+    def start_series(self, image_count, nframes, filename, file_path, z_height=None,
+                     magnification=None, metadata=None, queue_capacity=None, width=None):
+        """Ask the camera service to start a continuous series capture.
+
+        Returns the service reply: {"ok": True, "series_id": ..., "state": ...} on
+        acceptance, or {"ok": False, "error": {...}} if rejected. A reply with a
+        "timeout" key means the service did not answer in time.
+        """
+        msg = {
+            "command": "start_series",
+            "image_count": image_count,
+            "nframes": nframes,
+            "filename": filename,
+            "file_path": file_path,
+            "z_height": z_height,
+            "magnification": magnification,
+            "metadata": metadata or {},
+        }
+        # Omit optional values so the service's defaults (queue capacity 3,
+        # active width 4056) apply.
+        if queue_capacity is not None:
+            msg["queue_capacity"] = queue_capacity
+        if width is not None:
+            msg["width"] = width
+        return self._send_series_command(msg)
+
+    def series_status(self, series_id):
+        """Return the camera service's status snapshot for a series."""
+        return self._send_series_command({"command": "series_status", "series_id": series_id})
+
+    def cancel_series(self, series_id):
+        """Stop a series. Images already captured and queued are still written."""
+        return self._send_series_command({"command": "cancel_series", "series_id": series_id})
+
     def get_status(self):
         status = self.send_command({"command": "status"})
         print(f"\n{status}")

@@ -7,11 +7,14 @@ from picamera2.outputs import Output
 import numpy as np
 import signal
 import tifffile
+import threading
 import time
+import traceback
 import zmq
 import os
 from datetime import datetime
 import config as c
+import continuous_capture as cc
 import image_analysis_c as iac
 import analysis as a
 
@@ -41,6 +44,10 @@ class OutputZMQ(Output):
         self.analogue_gain = None
         self.z_height = None
         self.magnification = None
+
+        # Continuous series capture, set by camera_zmq(). Separate from the
+        # legacy accumulator above.
+        self.series_manager = None
 
     def accumulate(self, accT, filename_base: str, folder_path: str, exposure_time=None, analogue_gain=None, z_height=None, magnification=None):
         """
@@ -123,6 +130,11 @@ class OutputZMQ(Output):
         self.im = np.frombuffer(frame, dtype=np.uint16)
         self.im = np.reshape(self.im, (self.size[0], -1))
 
+        # Continuous series capture. The series consumes the frame before this
+        # callback returns and keeps no reference to the camera buffer.
+        if self.series_manager is not None:
+            self.series_manager.on_frame(self.im, timestamp)
+
         # Update accumulators if we are accumulating.
         if self.accT is not None:
             if (self.accN < self.accT):
@@ -173,6 +185,188 @@ class OutputZMQ(Output):
         if self.verbose:
             print(f"Accumulation finished. Saved to {self.current_tif_path}")
 
+
+# Protocol error codes for series commands. Capture/writer errors use the codes
+# defined in continuous_capture.
+ERROR_INVALID_REQUEST = "INVALID_REQUEST"
+ERROR_BUSY = "BUSY"
+ERROR_UNKNOWN_SERIES = "UNKNOWN_SERIES"
+ERROR_CALLBACK = "CALLBACK_ERROR"
+ERROR_SERVER = "SERVER_ERROR"
+
+
+def _error_response(code, message, **extra):
+    response = {"ok": False, "error": {"code": code, "message": message}}
+    response.update(extra)
+    return response
+
+
+class SeriesManager:
+    """Holds the active (or most recent) continuous series for the camera service.
+
+    Only one series exists at a time. A finished series is kept, with its latched
+    status and error, until the next series is started, so a failure can always
+    be read by a later status poll. A series that has not reached a terminal state
+    blocks new series requests; a terminal one does not.
+    """
+
+    def __init__(self, logger=print):
+        self.logger = logger
+        self._lock = threading.Lock()
+        self._series = None
+        self._callback_error = None
+
+    def is_active(self):
+        with self._lock:
+            series = self._series
+        return series is not None and not series.is_terminal()
+
+    def start(self, msg, legacy_busy, camera_metadata):
+        """Validate a start_series request and start the series. Return a response dict."""
+        if legacy_busy:
+            return _error_response(ERROR_BUSY, "A legacy accumulate capture is in progress")
+        if self.is_active():
+            return _error_response(ERROR_BUSY, "A continuous series is already in progress")
+
+        missing = [k for k in ("image_count", "nframes", "file_path", "filename") if k not in msg]
+        if missing:
+            return _error_response(ERROR_INVALID_REQUEST, f"Missing required fields: {missing}")
+        metadata = msg.get("metadata") or {}
+        if not isinstance(metadata, dict):
+            return _error_response(ERROR_INVALID_REQUEST, "metadata must be a JSON object")
+
+        # Caller metadata first; the camera-reported exposure/gain and the
+        # request's own fields are recorded in the legacy sidecar format.
+        metadata = dict(metadata)
+        magnification = msg.get("magnification")
+        metadata.update({
+            "exposure_time": camera_metadata.get("ExposureTime"),
+            "analogue_gain": camera_metadata.get("AnalogueGain"),
+            "magnification": f"{magnification}x" if magnification is not None else None,
+            "z_height": msg.get("z_height"),
+        })
+
+        try:
+            series = cc.ContinuousSeries(
+                image_count=msg["image_count"],
+                nframes=msg["nframes"],
+                output_dir=msg["file_path"],
+                base_filename=msg["filename"],
+                metadata=metadata,
+                queue_capacity=msg.get("queue_capacity", cc.DEFAULT_QUEUE_CAPACITY),
+                width=msg.get("width", cc.DEFAULT_ACTIVE_WIDTH),
+                logger=self.logger,
+            )
+        except (ValueError, TypeError) as e:
+            return _error_response(ERROR_INVALID_REQUEST, str(e))
+
+        with self._lock:
+            # Re-check under the lock in case another start raced this one.
+            if self._series is not None and not self._series.is_terminal():
+                return _error_response(ERROR_BUSY, "A continuous series is already in progress")
+            series.start()
+            self._series = series
+            self._callback_error = None
+
+        return {
+            "ok": True,
+            "series_id": series.series_id,
+            "state": series.state,
+            "requested_images": series.image_count,
+            "nframes": series.nframes,
+            "queue_capacity": series.queue_capacity,
+        }
+
+    def _find(self, msg):
+        series_id = msg.get("series_id")
+        if not series_id:
+            return None, _error_response(ERROR_INVALID_REQUEST, "Missing required field: series_id")
+        with self._lock:
+            series = self._series
+            callback_error = self._callback_error
+        if series is None or series.series_id != series_id:
+            return None, _error_response(
+                ERROR_UNKNOWN_SERIES, f"No series with id {series_id!r}", series_id=series_id
+            )
+        return (series, callback_error), None
+
+    def status(self, msg):
+        """Return the series' status snapshot, or an error response."""
+        found, error = self._find(msg)
+        if error:
+            return error
+        series, callback_error = found
+        snapshot = series.status_snapshot()
+        if callback_error is not None:
+            # An unexpected callback exception must never read as success.
+            if snapshot["error"] is None:
+                snapshot["error"] = callback_error
+            if snapshot["is_terminal"]:
+                snapshot["state"] = cc.STATE_FAILED
+        return snapshot
+
+    def cancel(self, msg):
+        """Cancel the series. Queued images are still written by the core."""
+        found, error = self._find(msg)
+        if error:
+            return error
+        series, _ = found
+        series.cancel()
+        return {"ok": True, "series_id": series.series_id, "state": series.state}
+
+    def on_frame(self, frame, timestamp_us):
+        """Forward one callback frame to the current series, if any.
+
+        Called from the camera callback. The series consumes the frame before
+        returning. Exceptions are caught so the shared camera callback, which the
+        legacy path also uses, keeps running.
+        """
+        with self._lock:
+            series = self._series
+        if series is None:
+            return
+        try:
+            series.add_frame(frame, timestamp_us)
+        except Exception as e:
+            self.logger(f"Continuous series frame error:\n{traceback.format_exc()}")
+            with self._lock:
+                if self._callback_error is None and self._series is series:
+                    self._callback_error = {
+                        "code": ERROR_CALLBACK,
+                        "message": f"Frame handling failed: {type(e).__name__}: {e}",
+                        "image_index": None,
+                        "filename": None,
+                    }
+            series.cancel()
+
+    def shutdown(self, timeout=30):
+        """Stop capture and let the writer finish queued images before exit."""
+        with self._lock:
+            series = self._series
+        if series is not None and not series.is_terminal():
+            series.cancel()
+            series.wait(timeout)
+
+
+def handle_series_command(msg, output, series_manager, picam2):
+    """Handle one continuous-series ZeroMQ command. Return the response dict."""
+    command = msg["command"]
+    if command == "start_series":
+        # Exposure and gain actually in use, as the legacy accumulate path records.
+        camera_metadata = picam2.capture_metadata()
+        # The legacy capture is busy from accumulate() until its save finishes,
+        # so check accT rather than accumulating(), which turns False early.
+        return series_manager.start(msg, legacy_busy=output.accT is not None,
+                                    camera_metadata=camera_metadata)
+    if command == "series_status":
+        return series_manager.status(msg)
+    if command == "cancel_series":
+        return series_manager.cancel(msg)
+    raise ValueError(f"Not a series command: {command}")
+
+
+SERIES_COMMANDS = frozenset({"start_series", "series_status", "cancel_series"})
+
 running = True
 
 def camera_zmq(verbose = True):
@@ -194,6 +388,8 @@ def camera_zmq(verbose = True):
 
     encoder = Encoder()
     output = OutputZMQ(size = size, verbose = False)
+    series_manager = SeriesManager()
+    output.series_manager = series_manager
 
     picam2.start()
     time.sleep(1)
@@ -220,7 +416,11 @@ def camera_zmq(verbose = True):
                     filename_from_client = msg.get("filename", "default_image")
                     folder_path_from_client = msg.get("file_path", f"{c.PI_IMAGE_DIR}")
 
-                    if (not output.accumulating()):
+                    if series_manager.is_active():
+                        # A continuous series owns the camera; reject rather than
+                        # silently ignoring the request.
+                        socket.send_string(json.dumps({"accumulating": "series running"}))
+                    elif (not output.accumulating()):
                         metadata = picam2.capture_metadata()
                         output.accumulate(int(msg["nframes"]), filename_base=filename_from_client, folder_path=folder_path_from_client,
                                           exposure_time=metadata.get("ExposureTime"), analogue_gain=metadata.get("AnalogueGain"),
@@ -267,6 +467,15 @@ def camera_zmq(verbose = True):
                     # Report True if NOT save_in_progress, False if save is still happening
                     socket.send_string(json.dumps({"save_complete": not output.save_in_progress}))
 
+                elif msg["command"] in SERIES_COMMANDS:
+                    try:
+                        response = handle_series_command(msg, output, series_manager, picam2)
+                    except Exception as e:
+                        # Always reply once, even on an unexpected failure.
+                        print(f"Series command error:\n{traceback.format_exc()}")
+                        response = _error_response(ERROR_SERVER, f"{type(e).__name__}: {e}")
+                    socket.send_string(json.dumps(response))
+
                 elif (msg["command"] == "stop"):
                     running = False
                     socket.send_string(json.dumps({"handled": msg["command"]}))
@@ -282,6 +491,9 @@ def camera_zmq(verbose = True):
     if verbose:
         n = output.cnt
         print("Acquired {0:d} frames at {1:.1f} FPS".format(n, n / (stop - start)))
+
+    # Stop any running series; its writer finishes already-queued images.
+    series_manager.shutdown()
 
     # Stop camera.
     picam2.stop_encoder()
