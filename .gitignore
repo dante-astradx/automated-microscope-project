@@ -20,3 +20,4 @@ test3.py
 test_script.py
 *.jpg
 *.md
+!CONTINUOUS-IMAGING-PLAN/*.md
