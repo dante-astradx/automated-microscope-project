@@ -34,6 +34,18 @@ from pathlib import Path
 from transfer_manager import enqueue_folder, mark_slide_done
 from folder_generator import generate_barcode_folders
 
+# Continuous (motion-blur) series polling, in seconds unless noted.
+MOTION_BLUR_POLL_INTERVAL_S = 0.5
+MOTION_BLUR_PROGRESS_LOG_S = 5.0
+# Fail if captured/written counts (and the current group's frame count) stop
+# changing for this long.
+MOTION_BLUR_STALL_TIMEOUT_S = 60.0
+# Fail after this many consecutive timeout/malformed status replies.
+MOTION_BLUR_MAX_BAD_REPLIES = 5
+# After a stop request, how long to wait for the cancelled series to finish
+# writing already-queued images and reach a terminal state.
+MOTION_BLUR_CANCEL_WAIT_S = 60.0
+
 class Motor:
     def __init__(self, filename, logger=print):
         # Moonraker API Endpoint
@@ -1033,15 +1045,43 @@ class Motor:
         nframes=1,
         image_count=100,
         exposure_time=None,
+        queue_capacity=None,
+        width=None,
+        series_count=1,
+        inter_series_pause_s=0.0,
     ):
-        """Capture consecutive multi-frame averages for motion-blur analysis.
+        """Capture a continuous series of multi-frame averages for motion-blur analysis.
 
         The slide barcode must already be set on ``self.filename``. X, Y, and Z
-        are metadata only; omitted coordinates are stored as JSON null and
-        represented as ``NA`` in image filenames. Each saved image accumulates
-        ``nframes`` camera frames using the existing camera behavior. Individual
-        image JSON files are retained and are not consolidated into the z-stack
-        JSON.
+        are metadata only and the stage axes are not moved; omitted coordinates
+        are stored as JSON null and represented as ``NA`` in image filenames.
+
+        One ``start_series`` request is sent to the camera service, which
+        captures ``image_count`` output images of ``nframes`` frames each and
+        writes one TIFF plus JSON sidecar per image (``_image1`` ... ``_imageN``).
+        Individual image JSON files are retained and are not consolidated into
+        the z-stack JSON. ``queue_capacity`` and ``width`` are sent only when
+        given, so the camera service defaults apply otherwise.
+
+        Returns ``{"series_id": ..., "status": <final status snapshot>}`` only
+        when the series is complete and every requested image was written.
+        Raises RuntimeError on rejection, timeout, stall, stop, overload, or any
+        other non-complete outcome. The light is turned off on every exit path
+        once imaging has started.
+
+        Repeated series: with ``series_count`` > 1, one ``start_series_batch``
+        request asks the camera to capture ``series_count`` series of
+        ``image_count`` images each. The camera schedules the pause itself:
+        the first frame of series *i + 1* has a sensor timestamp at least
+        ``inter_series_pause_s`` after the last frame of series *i*. The pause
+        does not include client polling or file writing, and is a minimum that
+        is rounded up to the camera's frame cadence. Files are named
+        ``<basename>_series<S>_image<I>``. The light stays on for the whole
+        batch. On success this returns
+        ``{"batch_id": ..., "series_ids": [...], "status": ...}``.
+
+        With ``series_count`` == 1 (the default), the single-series behavior
+        above is unchanged and ``inter_series_pause_s`` is not used.
         """
         if magnification not in (20, 40):
             raise ValueError("Motion-blur capture supports 20x and 40x only")
@@ -1059,6 +1099,23 @@ class Motor:
             or exposure_time <= 0
         ):
             raise ValueError("exposure_time must be a positive integer in microseconds")
+        for name, value in (("queue_capacity", queue_capacity), ("width", width)):
+            if value is not None and (
+                isinstance(value, bool) or not isinstance(value, int) or value < 1
+            ):
+                raise ValueError(f"{name} must be a positive integer")
+        if isinstance(series_count, bool) or not isinstance(series_count, int) or series_count < 1:
+            raise ValueError("series_count must be a positive integer")
+        if (
+            isinstance(inter_series_pause_s, bool)
+            or not isinstance(inter_series_pause_s, (int, float))
+            or not math.isfinite(inter_series_pause_s)
+            or inter_series_pause_s < 0
+        ):
+            raise ValueError("inter_series_pause_s must be a finite, non-negative number of seconds")
+        is_batch = series_count > 1
+        inter_series_pause_us = int(round(inter_series_pause_s * 1_000_000))
+        total_images = image_count * series_count
 
         self.focus_view = fov_number
         self.current_x = x_pos
@@ -1098,9 +1155,28 @@ class Motor:
             filename_z,
         )
 
-        image_filenames = []
-        self.start_imaging()
+        series_metadata = {
+            "x_pos": x_pos,
+            "y_pos": y_pos,
+            "z_pos": z_pos,
+            "smear_id": smear_id,
+            "fov": fov_number,
+            "barcode": self.filename.barcode,
+        }
+        optional_args = {}
+        if queue_capacity is not None:
+            optional_args["queue_capacity"] = queue_capacity
+        if width is not None:
+            optional_args["width"] = width
+
+        # Shared with the polling helper: whether a series is running, whether a
+        # stop was seen, and whether the camera acknowledged a cancel.
+        # For a batch, "id" holds the batch ID and the batch commands are used.
+        series = {"id": None, "stop_seen": False, "cancel_sent": False, "batch": is_batch}
+        noun = "batch" if is_batch else "series"
         try:
+            self.start_imaging()
+
             carousel_position = "2" if magnification == 20 else "3"
             self.move_carousel(carousel_position)
 
@@ -1108,59 +1184,316 @@ class Motor:
             # an explicit experiment exposure must be applied afterward.
             if exposure_time is not None:
                 self.imager.set_exposure_time(exposure_time)
+                time.sleep(2)
 
-            for image_number in range(1, image_count + 1):
-                self.check_stop()
-                image_filename = f"{base_filename}_image{image_number}"
-                tif_path = os.path.join(file_path, f"{image_filename}.tif")
-                json_path = os.path.join(file_path, f"{image_filename}.json")
-                previous_stamps = {
-                    path: os.stat(path).st_mtime_ns if os.path.exists(path) else None
-                    for path in (tif_path, json_path)
-                }
+            if self.stop_requested:
+                raise RuntimeError(f"Motor stop requested before the motion-blur {noun} started.")
 
+            if is_batch:
                 self.logger(
-                    f"Capturing motion-blur image {image_number}/{image_count} "
-                    f"at {magnification}x using {nframes} frame(s): {image_filename}"
+                    f"Starting motion-blur batch: {series_count} series x {image_count} "
+                    f"image(s) x {nframes} frame(s) at {magnification}x, minimum pause "
+                    f"{inter_series_pause_s} s between series, basename {base_filename}, "
+                    f"folder {file_path}"
                 )
-                self.imager.take_rpi_image(
+                reply = self.imager.start_series_batch(
+                    image_count,
+                    series_count,
                     nframes,
-                    image_filename,
+                    base_filename,
+                    file_path,
+                    inter_series_pause_us=inter_series_pause_us,
+                    z_height=z_pos,
+                    magnification=magnification,
+                    metadata=series_metadata,
+                    **optional_args,
+                )
+                id_key = "batch_id"
+            else:
+                self.logger(
+                    f"Starting motion-blur series: {image_count} image(s) x {nframes} frame(s) "
+                    f"at {magnification}x, basename {base_filename}, folder {file_path}"
+                )
+                reply = self.imager.start_series(
+                    image_count,
+                    nframes,
+                    base_filename,
                     file_path,
                     z_height=z_pos,
                     magnification=magnification,
+                    metadata=series_metadata,
+                    **optional_args,
+                )
+                id_key = "series_id"
+            if isinstance(reply, dict) and "timeout" in reply:
+                raise RuntimeError(
+                    "Timed out waiting for the camera service to accept the motion-blur "
+                    f"{noun} ({reply.get('timeout')}). A {noun} may still be running on "
+                    f"the camera; it cannot be cancelled because no {noun} ID was received."
+                )
+            if not isinstance(reply, dict) or reply.get("ok") is not True or not reply.get(id_key):
+                code, message = self._series_error_fields(reply)
+                raise RuntimeError(
+                    f"Camera service rejected the motion-blur {noun}: {code}: {message}"
                 )
 
-                # take_rpi_image starts asynchronous accumulation. Wait for this
-                # image to finish writing before starting the next accumulation.
-                deadline = time.monotonic() + 60
-                while True:
-                    self.check_stop()
-                    current_stamps = {
-                        path: os.stat(path).st_mtime_ns if os.path.exists(path) else None
-                        for path in (tif_path, json_path)
+            series["id"] = reply[id_key]
+            self.logger(f"Motion-blur {noun} {series['id']} accepted (state={reply.get('state')})")
+
+            status = self._poll_motion_blur_series(series, total_images)
+
+            counts = self._series_counts_text(status, total_images)
+            if is_batch:
+                counts += (
+                    f", completed series {status.get('completed_series')}/{series_count}"
+                )
+            if series["stop_seen"]:
+                raise RuntimeError(
+                    f"Motion-blur {noun} {series['id']} cancelled by stop request: "
+                    f"state={status.get('state')}, {counts}"
+                )
+            if status.get("state") == "complete" and status.get("written_images") == total_images:
+                if is_batch:
+                    self._log_batch_boundaries(series["id"], status)
+                    self.logger(
+                        f"Motion-blur batch {series['id']} complete: {series_count} series x "
+                        f"{image_count} image(s) written, {nframes} frame(s) per image"
+                    )
+                    return {
+                        "batch_id": series["id"],
+                        "series_ids": status.get("series_ids"),
+                        "status": status,
                     }
-                    if all(
-                        current_stamps[path] is not None
-                        and current_stamps[path] != previous_stamps[path]
-                        for path in (tif_path, json_path)
-                    ):
-                        break
-                    if time.monotonic() >= deadline:
-                        raise TimeoutError(
-                            f"Timed out waiting for camera output for {image_filename}"
-                        )
-                    time.sleep(0.1)
+                self.logger(
+                    f"Motion-blur series {series['id']} complete: {image_count} image(s) "
+                    f"written, {nframes} frame(s) per image"
+                )
+                return {"series_id": series["id"], "status": status}
 
-                image_filenames.append(image_filename)
-
-            self.logger(
-                f"Motion-blur capture complete: {image_count} images, "
-                f"{nframes} frame(s) per image"
+            code, message = self._series_error_fields(status)
+            error = status.get("error") if isinstance(status.get("error"), dict) else {}
+            failing = f"failing image={error.get('image_index')} ({error.get('filename')})"
+            if is_batch:
+                failing += (
+                    f", series {error.get('series_index')} image "
+                    f"{error.get('series_image_index')}"
+                )
+            raise RuntimeError(
+                f"Motion-blur {noun} {series['id']} did not complete: "
+                f"state={status.get('state')}, {counts}, error={code}: {message}, {failing}"
             )
-            return image_filenames
+        except BaseException:
+            # Never leave a started series running after a failure. A series that
+            # already reached a terminal state just acknowledges the cancel.
+            if series["id"] is not None and not series["cancel_sent"]:
+                self._cancel_motion_blur_series(series)
+            raise
         finally:
             self.stop_imaging()
+
+    @staticmethod
+    def _series_error_fields(reply):
+        """Return (code, message) from a series reply's error field."""
+        if not isinstance(reply, dict):
+            return None, f"unexpected reply {reply!r}"
+        error = reply.get("error")
+        if isinstance(error, dict):
+            return error.get("code"), error.get("message")
+        if error is not None:
+            return None, str(error)
+        if reply.get("ok") is True:
+            return None, None
+        return None, f"unexpected reply {reply!r}"
+
+    @staticmethod
+    def _series_counts_text(status, image_count):
+        if not status:
+            return "no valid status received"
+        return (
+            f"captured {status.get('captured_images')}/{image_count}, "
+            f"written {status.get('written_images')}/{image_count}"
+        )
+
+    @staticmethod
+    def _series_status_problem(reply, series_id, id_key="series_id"):
+        """Return why a series_status reply is unusable, or None if it is valid.
+
+        ``id_key`` is "batch_id" when checking a series_batch_status reply.
+        """
+        if not isinstance(reply, dict):
+            return f"malformed status reply {reply!r}"
+        if "timeout" in reply:
+            return f"status request timed out ({reply.get('timeout')})"
+        if reply.get("ok") is not True:
+            code, message = Motor._series_error_fields(reply)
+            return f"status request failed: {code}: {message}"
+        if reply.get(id_key) != series_id:
+            noun = "batch" if id_key == "batch_id" else "series"
+            return f"status reply is for {noun} {reply.get(id_key)!r}"
+        if not isinstance(reply.get("state"), str) or not isinstance(reply.get("is_terminal"), bool):
+            return f"malformed status reply {reply!r}"
+        for key in ("requested_images", "captured_images", "written_images"):
+            value = reply.get(key)
+            if isinstance(value, bool) or not isinstance(value, int):
+                return f"malformed status reply ({key}={value!r})"
+        return None
+
+    @staticmethod
+    def _format_mib(value):
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return "n/a"
+        return f"{value / (1024 * 1024):.0f} MiB"
+
+    def _log_series_progress(self, series_id, status, image_count, batch=False):
+        if batch:
+            prefix = (
+                f"Motion-blur batch {series_id}: state={status.get('state')}, "
+                f"series {status.get('current_series_index')}/{status.get('series_count')} "
+                f"({status.get('series_captured_images')}/{status.get('images_per_series')} "
+                f"captured"
+                f"{', pausing' if status.get('awaiting_next_series') else ''}), total "
+            )
+        else:
+            prefix = f"Motion-blur series {series_id}: state={status.get('state')}, "
+        self.logger(
+            f"{prefix}"
+            f"{self._series_counts_text(status, image_count)}, "
+            f"queue {status.get('queue_depth')}/{status.get('queue_capacity')} "
+            f"(peak {status.get('queue_high_watermark')}), "
+            f"process RSS {self._format_mib(status.get('process_rss_bytes'))}, "
+            f"available RAM {self._format_mib(status.get('system_available_bytes'))}"
+        )
+
+    def _log_batch_boundaries(self, batch_id, status):
+        """Log the measured sensor-timestamp gap at each series boundary."""
+        requested = status.get("inter_series_pause_us")
+        for boundary in status.get("boundaries") or []:
+            gap = boundary.get("observed_gap_us")
+            gap_text = "n/a" if gap is None else f"{gap / 1000:.1f} ms"
+            req_text = "n/a" if requested is None else f"{requested / 1000:.1f} ms"
+            self.logger(
+                f"Motion-blur batch {batch_id}: gap before series "
+                f"{boundary.get('before_series_index')} = {gap_text} "
+                f"(requested minimum {req_text}, {boundary.get('frames_skipped')} frame(s) skipped)"
+            )
+
+    def _cancel_motion_blur_series(self, series):
+        """Send cancel_series (or cancel_series_batch). Return True if acknowledged."""
+        noun = "batch" if series.get("batch") else "series"
+        try:
+            if series.get("batch"):
+                reply = self.imager.cancel_series_batch(series["id"])
+            else:
+                reply = self.imager.cancel_series(series["id"])
+        except Exception as e:
+            self.logger(
+                f"Could not cancel motion-blur {noun} {series['id']}: {type(e).__name__}: {e}"
+            )
+            return False
+        if isinstance(reply, dict) and reply.get("ok") is True:
+            series["cancel_sent"] = True
+            self.logger(
+                f"Cancel sent for motion-blur {noun} {series['id']} (state={reply.get('state')})"
+            )
+            return True
+        self.logger(f"Cancel of motion-blur {noun} {series['id']} not acknowledged: {reply!r}")
+        return False
+
+    def _poll_motion_blur_series(self, series, image_count):
+        """Poll a started series until the camera reports a terminal state.
+
+        Returns the final status snapshot. Progress is logged at the first
+        status, on each state change, about every MOTION_BLUR_PROGRESS_LOG_S
+        seconds, and at the end; never per frame. The stop flag is read
+        directly because check_stop() logs on every call. On stop the series is
+        cancelled and polling continues, for at most MOTION_BLUR_CANCEL_WAIT_S,
+        while queued images are written. Raises RuntimeError if progress
+        stalls, too many consecutive status replies are unusable, or a
+        cancelled series does not finish in time.
+        """
+        series_id = series["id"]
+        is_batch = bool(series.get("batch"))
+        noun = "batch" if is_batch else "series"
+        last_progress = None
+        last_progress_time = time.monotonic()
+        last_log_time = None
+        last_state = None
+        last_status = None
+        bad_replies = 0
+        cancel_deadline = None
+
+        while True:
+            if self.stop_requested and not series["stop_seen"]:
+                series["stop_seen"] = True
+                cancel_deadline = time.monotonic() + MOTION_BLUR_CANCEL_WAIT_S
+                self.logger(f"Stop requested; cancelling motion-blur {noun} {series_id}")
+            if series["stop_seen"] and not series["cancel_sent"]:
+                # Retried on later polls if the service did not acknowledge it.
+                self._cancel_motion_blur_series(series)
+
+            if is_batch:
+                reply = self.imager.series_batch_status(series_id)
+                problem = self._series_status_problem(reply, series_id, id_key="batch_id")
+            else:
+                reply = self.imager.series_status(series_id)
+                problem = self._series_status_problem(reply, series_id)
+            now = time.monotonic()
+            if problem is not None:
+                bad_replies += 1
+                self.logger(
+                    f"Motion-blur {noun} {series_id}: {problem} "
+                    f"({bad_replies}/{MOTION_BLUR_MAX_BAD_REPLIES})"
+                )
+                if bad_replies >= MOTION_BLUR_MAX_BAD_REPLIES:
+                    raise RuntimeError(
+                        f"Motion-blur {noun} {series_id}: {bad_replies} consecutive unusable "
+                        f"status replies (last: {problem}); last known "
+                        f"{self._series_counts_text(last_status, image_count)}"
+                    )
+            else:
+                bad_replies = 0
+                last_status = reply
+                state = reply["state"]
+                # frames_in_current_group also counts as progress, so a long
+                # group (large nframes or exposure) is not mistaken for a stall.
+                # For a batch, frames skipped during a pause also count, so a
+                # long requested pause is not mistaken for a stall.
+                progress = (
+                    reply["captured_images"],
+                    reply["written_images"],
+                    reply.get("frames_in_current_group"),
+                    reply.get("frames_skipped_in_pauses"),
+                )
+                if progress != last_progress:
+                    last_progress = progress
+                    last_progress_time = now
+
+                if reply["is_terminal"]:
+                    self._log_series_progress(series_id, reply, image_count, batch=is_batch)
+                    return reply
+                if (
+                    last_log_time is None
+                    or state != last_state
+                    or now - last_log_time >= MOTION_BLUR_PROGRESS_LOG_S
+                ):
+                    self._log_series_progress(series_id, reply, image_count, batch=is_batch)
+                    last_log_time = now
+                last_state = state
+
+            if cancel_deadline is not None and now >= cancel_deadline:
+                raise RuntimeError(
+                    f"Motion-blur {noun} {series_id} cancelled by stop request, but the camera "
+                    f"did not report a terminal state within {MOTION_BLUR_CANCEL_WAIT_S:.0f} s; "
+                    f"last known state={last_state}, "
+                    f"{self._series_counts_text(last_status, image_count)}"
+                )
+            if now - last_progress_time >= MOTION_BLUR_STALL_TIMEOUT_S:
+                raise RuntimeError(
+                    f"Motion-blur {noun} {series_id} made no progress for "
+                    f"{MOTION_BLUR_STALL_TIMEOUT_S:.0f} s: state={last_state}, "
+                    f"{self._series_counts_text(last_status, image_count)}"
+                )
+            time.sleep(MOTION_BLUR_POLL_INTERVAL_S)
 
     def handle_failed_qc(self):
         self.logger(f"Zstack failed QC at path: {self.zstack_folder_path}")
@@ -1346,10 +1679,25 @@ class Motor:
 if __name__ == "__main__":
     pass
     file = FileTransfer5()
-    file.set_barcode("IDWEUM")
+    file.set_barcode("SERIES50-T3")
     motor = Motor(filename = file)
     #motor.collect_data_manual_fov(126, 15, [20, 40], "SM1", 1, transfer=False)
-    motor.collect_exposure_series_manual_fov(131, 13, 300, 40, "SM2", 1)
+    #motor.collect_exposure_series_manual_fov(131, 13, 300, 40, "SM2", 1)
+    motor.collect_motion_blur_data(
+        x_pos=None,
+        y_pos=None,
+        z_pos=None,
+        magnification=20,
+        smear_id="SM1",
+        fov_number=1,
+        nframes=1,
+        image_count=5,
+        exposure_time=None,
+        queue_capacity=50,
+        width=None,
+        series_count=10,
+        inter_series_pause_s=1.0,
+    )
 
     # --- Exposure Time Pre-set Test ---
     #motor.home_carousel()

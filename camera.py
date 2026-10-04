@@ -156,6 +156,68 @@ class Camera:
         """Stop a series. Images already captured and queued are still written."""
         return self._send_series_command({"command": "cancel_series", "series_id": series_id})
 
+    # --- Frame-delivery diagnostics ---------------------------------------------
+    # Records libcamera sequence numbers, sensor timestamps and callback times
+    # for every frame delivered to the camera service, to find dropped frames.
+
+    def start_frame_diagnostics(self, label=None):
+        """Start recording per-frame diagnostics in the camera service."""
+        return self._send_series_command({"command": "start_frame_diagnostics", "label": label})
+
+    def frame_diagnostics_status(self):
+        """Summary of the current (or last) diagnostics session, without per-frame data."""
+        return self._send_series_command({"command": "frame_diagnostics_status"})
+
+    def stop_frame_diagnostics(self, output_dir=None):
+        """Stop recording. The camera service writes a per-frame JSON file and
+        returns its path and a summary. ``output_dir`` defaults to
+        <PI_IMAGE_DIR>/frame_diagnostics on the camera host."""
+        msg = {"command": "stop_frame_diagnostics"}
+        if output_dir is not None:
+            msg["output_dir"] = output_dir
+        return self._send_series_command(msg)
+
+    # --- Repeated series (batch) -------------------------------------------------
+    # One request runs series_count series of image_count images. The camera
+    # service schedules the pause between series from sensor timestamps, so it
+    # does not depend on client polling or on the writer finishing.
+
+    def start_series_batch(self, image_count, series_count, nframes, filename, file_path,
+                           inter_series_pause_us=0, z_height=None, magnification=None,
+                           metadata=None, queue_capacity=None, width=None):
+        """Ask the camera service to start a batch of repeated series.
+
+        ``inter_series_pause_us`` is the minimum sensor-timestamp gap, in
+        microseconds, from the last frame of one series to the first frame of
+        the next. Returns {"ok": True, "batch_id": ..., ...} on acceptance,
+        {"ok": False, "error": {...}} if rejected, or a "timeout" reply.
+        """
+        msg = {
+            "command": "start_series_batch",
+            "image_count": image_count,
+            "series_count": series_count,
+            "nframes": nframes,
+            "filename": filename,
+            "file_path": file_path,
+            "inter_series_pause_us": inter_series_pause_us,
+            "z_height": z_height,
+            "magnification": magnification,
+            "metadata": metadata or {},
+        }
+        if queue_capacity is not None:
+            msg["queue_capacity"] = queue_capacity
+        if width is not None:
+            msg["width"] = width
+        return self._send_series_command(msg)
+
+    def series_batch_status(self, batch_id):
+        """Return the camera service's status snapshot for a batch."""
+        return self._send_series_command({"command": "series_batch_status", "batch_id": batch_id})
+
+    def cancel_series_batch(self, batch_id):
+        """Stop a batch; no further series start. Queued images are still written."""
+        return self._send_series_command({"command": "cancel_series_batch", "batch_id": batch_id})
+
     def get_status(self):
         status = self.send_command({"command": "status"})
         print(f"\n{status}")

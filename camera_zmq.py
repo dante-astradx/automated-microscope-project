@@ -15,6 +15,7 @@ import os
 from datetime import datetime
 import config as c
 import continuous_capture as cc
+import frame_diagnostics as fd
 import image_analysis_c as iac
 import analysis as a
 
@@ -48,6 +49,10 @@ class OutputZMQ(Output):
         # Continuous series capture, set by camera_zmq(). Separate from the
         # legacy accumulator above.
         self.series_manager = None
+
+        # Optional frame-delivery diagnostics, set by camera_zmq(). Records
+        # nothing unless a diagnostics session has been started.
+        self.frame_diagnostics = None
 
     def accumulate(self, accT, filename_base: str, folder_path: str, exposure_time=None, analogue_gain=None, z_height=None, magnification=None):
         """
@@ -126,6 +131,26 @@ class OutputZMQ(Output):
         }
 
     def outputframe(self, frame, keyframe=True, timestamp=None, packet=None, audio=False):
+        diagnostics = self.frame_diagnostics
+        if diagnostics is not None and diagnostics.active:
+            started = time.perf_counter()
+            mode = self._frame_mode()
+            if self._outputframe(frame, timestamp):
+                mode = fd.MODE_LEGACY_SAVE
+            diagnostics.record_callback(timestamp, time.perf_counter() - started, mode)
+        else:
+            self._outputframe(frame, timestamp)
+
+    def _frame_mode(self):
+        """Which capture path this frame is for (diagnostics only)."""
+        if self.accT is not None:
+            return fd.MODE_LEGACY
+        if self.series_manager is not None and self.series_manager.is_active():
+            return fd.MODE_SERIES
+        return fd.MODE_IDLE
+
+    def _outputframe(self, frame, timestamp):
+        """Process one frame. Returns True if the legacy TIFF was saved in this call."""
         self.cnt += 1
         self.im = np.frombuffer(frame, dtype=np.uint16)
         self.im = np.reshape(self.im, (self.size[0], -1))
@@ -149,6 +174,8 @@ class OutputZMQ(Output):
                 self.accT = None
                 # self.current_tif_path = None # clear filename after saving
                 # self.current_json_path = None
+                return True
+        return False
 
     def save_accumulated(self):
         self.save_in_progress = True
@@ -221,19 +248,19 @@ class SeriesManager:
             series = self._series
         return series is not None and not series.is_terminal()
 
-    def start(self, msg, legacy_busy, camera_metadata):
-        """Validate a start_series request and start the series. Return a response dict."""
+    def _prepare_start(self, msg, legacy_busy, camera_metadata, required):
+        """Shared start validation. Return (metadata, None) or (None, error response)."""
         if legacy_busy:
-            return _error_response(ERROR_BUSY, "A legacy accumulate capture is in progress")
+            return None, _error_response(ERROR_BUSY, "A legacy accumulate capture is in progress")
         if self.is_active():
-            return _error_response(ERROR_BUSY, "A continuous series is already in progress")
+            return None, _error_response(ERROR_BUSY, "A continuous series is already in progress")
 
-        missing = [k for k in ("image_count", "nframes", "file_path", "filename") if k not in msg]
+        missing = [k for k in required if k not in msg]
         if missing:
-            return _error_response(ERROR_INVALID_REQUEST, f"Missing required fields: {missing}")
+            return None, _error_response(ERROR_INVALID_REQUEST, f"Missing required fields: {missing}")
         metadata = msg.get("metadata") or {}
         if not isinstance(metadata, dict):
-            return _error_response(ERROR_INVALID_REQUEST, "metadata must be a JSON object")
+            return None, _error_response(ERROR_INVALID_REQUEST, "metadata must be a JSON object")
 
         # Caller metadata first; the camera-reported exposure/gain and the
         # request's own fields are recorded in the legacy sidecar format.
@@ -245,6 +272,27 @@ class SeriesManager:
             "magnification": f"{magnification}x" if magnification is not None else None,
             "z_height": msg.get("z_height"),
         })
+        return metadata, None
+
+    def _install(self, series):
+        """Start ``series`` and make it current. Return an error response or None."""
+        with self._lock:
+            # Re-check under the lock in case another start raced this one.
+            if self._series is not None and not self._series.is_terminal():
+                return _error_response(ERROR_BUSY, "A continuous series is already in progress")
+            series.start()
+            self._series = series
+            self._callback_error = None
+        return None
+
+    def start(self, msg, legacy_busy, camera_metadata):
+        """Validate a start_series request and start the series. Return a response dict."""
+        metadata, error = self._prepare_start(
+            msg, legacy_busy, camera_metadata,
+            ("image_count", "nframes", "file_path", "filename"),
+        )
+        if error:
+            return error
 
         try:
             series = cc.ContinuousSeries(
@@ -260,13 +308,9 @@ class SeriesManager:
         except (ValueError, TypeError) as e:
             return _error_response(ERROR_INVALID_REQUEST, str(e))
 
-        with self._lock:
-            # Re-check under the lock in case another start raced this one.
-            if self._series is not None and not self._series.is_terminal():
-                return _error_response(ERROR_BUSY, "A continuous series is already in progress")
-            series.start()
-            self._series = series
-            self._callback_error = None
+        error = self._install(series)
+        if error:
+            return error
 
         return {
             "ok": True,
@@ -277,22 +321,84 @@ class SeriesManager:
             "queue_capacity": series.queue_capacity,
         }
 
-    def _find(self, msg):
-        series_id = msg.get("series_id")
+    def start_batch(self, msg, legacy_busy, camera_metadata):
+        """Validate a start_series_batch request and start the batch.
+
+        Runs ``series_count`` series of ``image_count`` images, with the camera
+        enforcing at least ``inter_series_pause_us`` (sensor time) between the
+        last frame of one series and the first frame of the next.
+        """
+        metadata, error = self._prepare_start(
+            msg, legacy_busy, camera_metadata,
+            ("image_count", "series_count", "nframes", "file_path", "filename"),
+        )
+        if error:
+            return error
+
+        try:
+            batch = cc.ContinuousSeriesBatch(
+                image_count=msg["image_count"],
+                series_count=msg["series_count"],
+                nframes=msg["nframes"],
+                output_dir=msg["file_path"],
+                base_filename=msg["filename"],
+                metadata=metadata,
+                inter_series_pause_us=msg.get("inter_series_pause_us", 0),
+                queue_capacity=msg.get("queue_capacity", cc.DEFAULT_QUEUE_CAPACITY),
+                width=msg.get("width", cc.DEFAULT_ACTIVE_WIDTH),
+                logger=self.logger,
+            )
+        except (ValueError, TypeError) as e:
+            return _error_response(ERROR_INVALID_REQUEST, str(e))
+
+        error = self._install(batch)
+        if error:
+            return error
+
+        return {
+            "ok": True,
+            "batch_id": batch.batch_id,
+            "series_ids": list(batch.child_series_ids),
+            "state": batch.state,
+            "series_count": batch.series_count,
+            "images_per_series": batch.images_per_series,
+            "requested_images": batch.image_count,
+            "nframes": batch.nframes,
+            "inter_series_pause_us": batch.inter_series_pause_us,
+            "queue_capacity": batch.queue_capacity,
+        }
+
+    def _find(self, msg, key="series_id", batch=False):
+        series_id = msg.get(key)
         if not series_id:
-            return None, _error_response(ERROR_INVALID_REQUEST, "Missing required field: series_id")
+            return None, _error_response(ERROR_INVALID_REQUEST, f"Missing required field: {key}")
         with self._lock:
             series = self._series
             callback_error = self._callback_error
-        if series is None or series.series_id != series_id:
+        is_batch = isinstance(series, cc.ContinuousSeriesBatch)
+        if series is None or series.series_id != series_id or (batch and not is_batch):
+            noun = "batch" if batch else "series"
             return None, _error_response(
-                ERROR_UNKNOWN_SERIES, f"No series with id {series_id!r}", series_id=series_id
+                ERROR_UNKNOWN_SERIES, f"No {noun} with id {series_id!r}", **{key: series_id}
             )
         return (series, callback_error), None
 
-    def status(self, msg):
+    def batch_status(self, msg):
+        """Return the batch's status snapshot, or an error response."""
+        return self.status(msg, key="batch_id", batch=True)
+
+    def cancel_batch(self, msg):
+        """Cancel the batch: no further series start; queued images are written."""
+        found, error = self._find(msg, key="batch_id", batch=True)
+        if error:
+            return error
+        batch, _ = found
+        batch.cancel()
+        return {"ok": True, "batch_id": batch.batch_id, "state": batch.state}
+
+    def status(self, msg, key="series_id", batch=False):
         """Return the series' status snapshot, or an error response."""
-        found, error = self._find(msg)
+        found, error = self._find(msg, key=key, batch=batch)
         if error:
             return error
         series, callback_error = found
@@ -362,10 +468,68 @@ def handle_series_command(msg, output, series_manager, picam2):
         return series_manager.status(msg)
     if command == "cancel_series":
         return series_manager.cancel(msg)
+    if command == "start_series_batch":
+        camera_metadata = picam2.capture_metadata()
+        return series_manager.start_batch(msg, legacy_busy=output.accT is not None,
+                                          camera_metadata=camera_metadata)
+    if command == "series_batch_status":
+        return series_manager.batch_status(msg)
+    if command == "cancel_series_batch":
+        return series_manager.cancel_batch(msg)
     raise ValueError(f"Not a series command: {command}")
 
 
-SERIES_COMMANDS = frozenset({"start_series", "series_status", "cancel_series"})
+SERIES_COMMANDS = frozenset({
+    "start_series", "series_status", "cancel_series",
+    "start_series_batch", "series_batch_status", "cancel_series_batch",
+})
+
+DIAGNOSTICS_COMMANDS = frozenset({"start_frame_diagnostics", "frame_diagnostics_status",
+                                  "stop_frame_diagnostics"})
+DEFAULT_DIAGNOSTICS_DIR = os.path.join(c.PI_IMAGE_DIR, "frame_diagnostics")
+
+
+def _diagnostics_camera_info(picam2):
+    """Camera settings worth recording with a diagnostics session."""
+    info = {}
+    try:
+        metadata = picam2.capture_metadata()
+        for key in ("ExposureTime", "AnalogueGain", "FrameDuration", "SensorTimestamp"):
+            if key in metadata:
+                info[key] = metadata[key]
+    except Exception as e:
+        info["metadata_error"] = f"{type(e).__name__}: {e}"
+    try:
+        config = picam2.camera_configuration() or {}
+        info["buffer_count"] = config.get("buffer_count")
+        info["configured_controls"] = {
+            k: v for k, v in (config.get("controls") or {}).items()
+            if k in ("FrameDurationLimits", "FrameRate", "NoiseReductionMode")}
+    except Exception as e:
+        info["configuration_error"] = f"{type(e).__name__}: {e}"
+    return json.loads(json.dumps(info, default=str))
+
+
+def handle_diagnostics_command(msg, diagnostics, picam2):
+    """Handle one frame-diagnostics ZeroMQ command. Return the response dict."""
+    command = msg["command"]
+    if command == "start_frame_diagnostics":
+        try:
+            session_id = diagnostics.start(label=msg.get("label"),
+                                           camera_info=_diagnostics_camera_info(picam2))
+        except RuntimeError as e:
+            return _error_response(ERROR_BUSY, str(e))
+        return {"ok": True, "session_id": session_id, "camera_info": diagnostics.camera_info}
+    if command == "frame_diagnostics_status":
+        return {"ok": True, **diagnostics.status()}
+    if command == "stop_frame_diagnostics":
+        if diagnostics.session_id is None:
+            return _error_response(ERROR_INVALID_REQUEST, "No diagnostics session has been started")
+        output_dir = msg.get("output_dir") or DEFAULT_DIAGNOSTICS_DIR
+        status, path = diagnostics.stop(output_dir=output_dir)
+        return {"ok": True, "path": path, **status}
+    raise ValueError(f"Not a diagnostics command: {command}")
+
 
 running = True
 
@@ -390,6 +554,12 @@ def camera_zmq(verbose = True):
     output = OutputZMQ(size = size, verbose = False)
     series_manager = SeriesManager()
     output.series_manager = series_manager
+
+    # Frame diagnostics: post_callback runs on the camera thread for every
+    # completed request, just before the encoder calls output.outputframe().
+    diagnostics = fd.FrameDiagnostics()
+    output.frame_diagnostics = diagnostics
+    picam2.post_callback = diagnostics.on_request
 
     picam2.start()
     time.sleep(1)
@@ -473,6 +643,14 @@ def camera_zmq(verbose = True):
                     except Exception as e:
                         # Always reply once, even on an unexpected failure.
                         print(f"Series command error:\n{traceback.format_exc()}")
+                        response = _error_response(ERROR_SERVER, f"{type(e).__name__}: {e}")
+                    socket.send_string(json.dumps(response))
+
+                elif msg["command"] in DIAGNOSTICS_COMMANDS:
+                    try:
+                        response = handle_diagnostics_command(msg, diagnostics, picam2)
+                    except Exception as e:
+                        print(f"Diagnostics command error:\n{traceback.format_exc()}")
                         response = _error_response(ERROR_SERVER, f"{type(e).__name__}: {e}")
                     socket.send_string(json.dumps(response))
 

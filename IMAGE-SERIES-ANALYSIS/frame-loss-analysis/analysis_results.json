@@ -1,0 +1,1046 @@
+{
+  "sessions": [
+    {
+      "label": "idle_r1",
+      "file": "20261004_172059_idle_r1_acb623835f64_frames.json",
+      "elapsed_s": 12.024,
+      "frames": 120,
+      "period_ms": 100.0,
+      "camera_info": {
+        "ExposureTime": 11000,
+        "AnalogueGain": 1.0,
+        "FrameDuration": 100000,
+        "SensorTimestamp": 4153037641039000,
+        "buffer_count": 6,
+        "configured_controls": {
+          "NoiseReductionMode": "NoiseReductionModeEnum.Fast",
+          "FrameDurationLimits": [
+            33333,
+            33333
+          ]
+        }
+      },
+      "unpaired": 0,
+      "truncated": 0,
+      "seq_missing": 0,
+      "ts_missing": 0,
+      "interval_good": {
+        "n": 119,
+        "median": 100.0,
+        "p95": 100.005,
+        "max": 100.013
+      },
+      "interval_first_third": 100.0003,
+      "interval_last_third": 100.0004,
+      "interval_multiples": [
+        1
+      ],
+      "gaps": 0,
+      "latency": {
+        "n": 120,
+        "median": 157.04,
+        "p95": 159.243,
+        "max": 161.666
+      },
+      "lat_first_third": 143.92,
+      "lat_last_third": 156.21,
+      "callback": {
+        "n": 120,
+        "median": 0.095,
+        "p95": 0.114,
+        "max": 0.578
+      },
+      "callback_by_mode": {
+        "idle": {
+          "n": 120,
+          "median": 0.095,
+          "p95": 0.114,
+          "max": 0.578
+        }
+      },
+      "slow_callbacks": 0,
+      "mode_counts": {
+        "idle": 120
+      }
+    },
+    {
+      "label": "legacy_r1",
+      "file": "20261004_172111_legacy_r1_9b952fbd98aa_frames.json",
+      "elapsed_s": 13.524,
+      "frames": 126,
+      "period_ms": 100.0,
+      "camera_info": {
+        "ExposureTime": 11000,
+        "AnalogueGain": 1.0,
+        "FrameDuration": 100000,
+        "SensorTimestamp": 4153049741069000,
+        "buffer_count": 6,
+        "configured_controls": {
+          "NoiseReductionMode": "NoiseReductionModeEnum.Fast",
+          "FrameDurationLimits": [
+            33333,
+            33333
+          ]
+        }
+      },
+      "unpaired": 0,
+      "truncated": 0,
+      "seq_missing": 0,
+      "ts_missing": 9,
+      "interval_good": {
+        "n": 125,
+        "median": 100.0,
+        "p95": 100.015,
+        "max": 999.998
+      },
+      "interval_first_third": 100.0007,
+      "interval_last_third": 121.9513,
+      "interval_multiples": [
+        1,
+        10
+      ],
+      "gaps": 1,
+      "latency": {
+        "n": 126,
+        "median": 133.01,
+        "p95": 205.9,
+        "max": 1198.183
+      },
+      "lat_first_third": 145.81,
+      "lat_last_third": 219.13,
+      "callback": {
+        "n": 126,
+        "median": 74.768,
+        "p95": 82.634,
+        "max": 1152.552
+      },
+      "callback_by_mode": {
+        "idle": {
+          "n": 25,
+          "median": 0.063,
+          "p95": 0.071,
+          "max": 0.074
+        },
+        "legacy": {
+          "n": 100,
+          "median": 75.599,
+          "p95": 82.729,
+          "max": 182.766
+        },
+        "legacy_save": {
+          "n": 1,
+          "median": 1152.552,
+          "p95": 1152.552,
+          "max": 1152.552
+        }
+      },
+      "slow_callbacks": 2,
+      "mode_counts": {
+        "idle": 25,
+        "legacy": 100,
+        "legacy_save": 1
+      }
+    },
+    {
+      "label": "legacy_tmpfs_r1",
+      "file": "20261004_172125_legacy_tmpfs_r1_b2813b73260d_frames.json",
+      "elapsed_s": 13.532,
+      "frames": 127,
+      "period_ms": 100.0,
+      "camera_info": {
+        "ExposureTime": 11000,
+        "AnalogueGain": 1.0,
+        "FrameDuration": 100000,
+        "SensorTimestamp": 4153063341100000,
+        "buffer_count": 6,
+        "configured_controls": {
+          "NoiseReductionMode": "NoiseReductionModeEnum.Fast",
+          "FrameDurationLimits": [
+            33333,
+            33333
+          ]
+        }
+      },
+      "unpaired": 0,
+      "truncated": 0,
+      "seq_missing": 0,
+      "ts_missing": 8,
+      "interval_good": {
+        "n": 126,
+        "median": 100.0,
+        "p95": 100.006,
+        "max": 899.994
+      },
+      "interval_first_third": 100.0004,
+      "interval_last_third": 119.0476,
+      "interval_multiples": [
+        1,
+        9
+      ],
+      "gaps": 1,
+      "latency": {
+        "n": 127,
+        "median": 132.217,
+        "p95": 171.776,
+        "max": 1150.01
+      },
+      "lat_first_third": 138.73,
+      "lat_last_third": 214.31,
+      "callback": {
+        "n": 127,
+        "median": 66.936,
+        "p95": 75.303,
+        "max": 1105.291
+      },
+      "callback_by_mode": {
+        "idle": {
+          "n": 26,
+          "median": 0.062,
+          "p95": 0.078,
+          "max": 0.086
+        },
+        "legacy": {
+          "n": 100,
+          "median": 67.252,
+          "p95": 75.687,
+          "max": 167.207
+        },
+        "legacy_save": {
+          "n": 1,
+          "median": 1105.291,
+          "p95": 1105.291,
+          "max": 1105.291
+        }
+      },
+      "slow_callbacks": 2,
+      "mode_counts": {
+        "idle": 26,
+        "legacy": 100,
+        "legacy_save": 1
+      }
+    },
+    {
+      "label": "series_r1",
+      "file": "20261004_172139_series_r1_e3e7bf06ba96_frames.json",
+      "elapsed_s": 8.819,
+      "frames": 80,
+      "period_ms": 100.0,
+      "camera_info": {
+        "ExposureTime": 11000,
+        "AnalogueGain": 1.0,
+        "FrameDuration": 100000,
+        "SensorTimestamp": 4153077041130000,
+        "buffer_count": 6,
+        "configured_controls": {
+          "NoiseReductionMode": "NoiseReductionModeEnum.Fast",
+          "FrameDurationLimits": [
+            33333,
+            33333
+          ]
+        }
+      },
+      "unpaired": 0,
+      "truncated": 0,
+      "seq_missing": 0,
+      "ts_missing": 8,
+      "interval_good": {
+        "n": 79,
+        "median": 100.0,
+        "p95": 100.01,
+        "max": 500.002
+      },
+      "interval_first_third": 130.7694,
+      "interval_last_third": 100.0003,
+      "interval_multiples": [
+        1,
+        3,
+        5
+      ],
+      "gaps": 3,
+      "latency": {
+        "n": 80,
+        "median": 129.218,
+        "p95": 443.609,
+        "max": 587.68
+      },
+      "lat_first_third": 252.67,
+      "lat_last_third": 137.7,
+      "callback": {
+        "n": 80,
+        "median": 0.074,
+        "p95": 175.745,
+        "max": 210.723
+      },
+      "callback_by_mode": {
+        "idle": {
+          "n": 25,
+          "median": 0.071,
+          "p95": 0.12,
+          "max": 0.124
+        },
+        "series": {
+          "n": 55,
+          "median": 0.082,
+          "p95": 183.578,
+          "max": 210.723
+        }
+      },
+      "slow_callbacks": 10,
+      "mode_counts": {
+        "idle": 25,
+        "series": 55
+      }
+    },
+    {
+      "label": "series_tmpfs_r1",
+      "file": "20261004_172148_series_tmpfs_r1_edd85fca04c0_frames.json",
+      "elapsed_s": 6.143,
+      "frames": 44,
+      "period_ms": 100.0,
+      "camera_info": {
+        "ExposureTime": 11000,
+        "AnalogueGain": 1.0,
+        "FrameDuration": 100000,
+        "SensorTimestamp": 4153086141149000,
+        "buffer_count": 6,
+        "configured_controls": {
+          "NoiseReductionMode": "NoiseReductionModeEnum.Fast",
+          "FrameDurationLimits": [
+            33333,
+            33333
+          ]
+        }
+      },
+      "unpaired": 0,
+      "truncated": 0,
+      "seq_missing": 0,
+      "ts_missing": 18,
+      "interval_good": {
+        "n": 43,
+        "median": 100.002,
+        "p95": 479.99,
+        "max": 600.011
+      },
+      "interval_first_third": 178.573,
+      "interval_last_third": 100.0002,
+      "interval_multiples": [
+        1,
+        2,
+        3,
+        5,
+        6
+      ],
+      "gaps": 6,
+      "latency": {
+        "n": 44,
+        "median": 129.173,
+        "p95": 725.985,
+        "max": 953.461
+      },
+      "lat_first_third": 508.75,
+      "lat_last_third": 128.92,
+      "callback": {
+        "n": 44,
+        "median": 0.073,
+        "p95": 213.675,
+        "max": 409.884
+      },
+      "callback_by_mode": {
+        "idle": {
+          "n": 26,
+          "median": 0.07,
+          "p95": 0.1,
+          "max": 0.111
+        },
+        "series": {
+          "n": 18,
+          "median": 195.084,
+          "p95": 266.763,
+          "max": 409.884
+        }
+      },
+      "slow_callbacks": 15,
+      "mode_counts": {
+        "idle": 26,
+        "series": 18
+      }
+    },
+    {
+      "label": "idle_r2",
+      "file": "20261004_172154_idle_r2_7d24eb812f0d_frames.json",
+      "elapsed_s": 12.016,
+      "frames": 120,
+      "period_ms": 100.0,
+      "camera_info": {
+        "ExposureTime": 11000,
+        "AnalogueGain": 1.0,
+        "FrameDuration": 100000,
+        "SensorTimestamp": 4153092441168000,
+        "buffer_count": 6,
+        "configured_controls": {
+          "NoiseReductionMode": "NoiseReductionModeEnum.Fast",
+          "FrameDurationLimits": [
+            33333,
+            33333
+          ]
+        }
+      },
+      "unpaired": 0,
+      "truncated": 0,
+      "seq_missing": 0,
+      "ts_missing": 0,
+      "interval_good": {
+        "n": 119,
+        "median": 100.0,
+        "p95": 100.004,
+        "max": 100.006
+      },
+      "interval_first_third": 100.0002,
+      "interval_last_third": 100.0002,
+      "interval_multiples": [
+        1
+      ],
+      "gaps": 0,
+      "latency": {
+        "n": 120,
+        "median": 155.587,
+        "p95": 158.775,
+        "max": 160.727
+      },
+      "lat_first_third": 129.05,
+      "lat_last_third": 156.98,
+      "callback": {
+        "n": 120,
+        "median": 0.106,
+        "p95": 0.121,
+        "max": 0.146
+      },
+      "callback_by_mode": {
+        "idle": {
+          "n": 120,
+          "median": 0.106,
+          "p95": 0.121,
+          "max": 0.146
+        }
+      },
+      "slow_callbacks": 0,
+      "mode_counts": {
+        "idle": 120
+      }
+    },
+    {
+      "label": "legacy_r2",
+      "file": "20261004_172206_legacy_r2_430f1d73c661_frames.json",
+      "elapsed_s": 14.478,
+      "frames": 129,
+      "period_ms": 100.0,
+      "camera_info": {
+        "ExposureTime": 11000,
+        "AnalogueGain": 1.0,
+        "FrameDuration": 100000,
+        "SensorTimestamp": 4153104541196000,
+        "buffer_count": 6,
+        "configured_controls": {
+          "NoiseReductionMode": "NoiseReductionModeEnum.Fast",
+          "FrameDurationLimits": [
+            33333,
+            33333
+          ]
+        }
+      },
+      "unpaired": 0,
+      "truncated": 0,
+      "seq_missing": 0,
+      "ts_missing": 16,
+      "interval_good": {
+        "n": 128,
+        "median": 100.0,
+        "p95": 100.02,
+        "max": 1700.001
+      },
+      "interval_first_third": 100.0005,
+      "interval_last_third": 138.0948,
+      "interval_multiples": [
+        1,
+        17
+      ],
+      "gaps": 1,
+      "latency": {
+        "n": 129,
+        "median": 133.286,
+        "p95": 267.832,
+        "max": 1968.563
+      },
+      "lat_first_third": 161.51,
+      "lat_last_third": 298.76,
+      "callback": {
+        "n": 129,
+        "median": 76.098,
+        "p95": 88.994,
+        "max": 1921.107
+      },
+      "callback_by_mode": {
+        "idle": {
+          "n": 28,
+          "median": 0.07,
+          "p95": 0.083,
+          "max": 0.104
+        },
+        "legacy": {
+          "n": 100,
+          "median": 77.082,
+          "p95": 90.929,
+          "max": 194.78
+        },
+        "legacy_save": {
+          "n": 1,
+          "median": 1921.107,
+          "p95": 1921.107,
+          "max": 1921.107
+        }
+      },
+      "slow_callbacks": 3,
+      "mode_counts": {
+        "idle": 28,
+        "legacy": 100,
+        "legacy_save": 1
+      }
+    },
+    {
+      "label": "legacy_tmpfs_r2",
+      "file": "20261004_172221_legacy_tmpfs_r2_a1417e5d9324_frames.json",
+      "elapsed_s": 13.683,
+      "frames": 126,
+      "period_ms": 100.0,
+      "camera_info": {
+        "ExposureTime": 11000,
+        "AnalogueGain": 1.0,
+        "FrameDuration": 100000,
+        "SensorTimestamp": 4153119241220000,
+        "buffer_count": 6,
+        "configured_controls": {
+          "NoiseReductionMode": "NoiseReductionModeEnum.Fast",
+          "FrameDurationLimits": [
+            33333,
+            33333
+          ]
+        }
+      },
+      "unpaired": 0,
+      "truncated": 0,
+      "seq_missing": 0,
+      "ts_missing": 10,
+      "interval_good": {
+        "n": 125,
+        "median": 100.0,
+        "p95": 100.012,
+        "max": 1099.994
+      },
+      "interval_first_third": 100.0004,
+      "interval_last_third": 124.3902,
+      "interval_multiples": [
+        1,
+        11
+      ],
+      "gaps": 1,
+      "latency": {
+        "n": 126,
+        "median": 142.984,
+        "p95": 227.02,
+        "max": 1300.133
+      },
+      "lat_first_third": 174.24,
+      "lat_last_third": 229.31,
+      "callback": {
+        "n": 126,
+        "median": 86.626,
+        "p95": 94.142,
+        "max": 1251.202
+      },
+      "callback_by_mode": {
+        "idle": {
+          "n": 25,
+          "median": 0.07,
+          "p95": 0.073,
+          "max": 0.078
+        },
+        "legacy": {
+          "n": 100,
+          "median": 87.168,
+          "p95": 94.466,
+          "max": 189.433
+        },
+        "legacy_save": {
+          "n": 1,
+          "median": 1251.202,
+          "p95": 1251.202,
+          "max": 1251.202
+        }
+      },
+      "slow_callbacks": 5,
+      "mode_counts": {
+        "idle": 25,
+        "legacy": 100,
+        "legacy_save": 1
+      }
+    },
+    {
+      "label": "series_r2",
+      "file": "20261004_172235_series_r2_11dd44d243f0_frames.json",
+      "elapsed_s": 8.81,
+      "frames": 75,
+      "period_ms": 100.0,
+      "camera_info": {
+        "ExposureTime": 11000,
+        "AnalogueGain": 1.0,
+        "FrameDuration": 100000,
+        "SensorTimestamp": 4153133041248000,
+        "buffer_count": 6,
+        "configured_controls": {
+          "NoiseReductionMode": "NoiseReductionModeEnum.Fast",
+          "FrameDurationLimits": [
+            33333,
+            33333
+          ]
+        }
+      },
+      "unpaired": 0,
+      "truncated": 0,
+      "seq_missing": 0,
+      "ts_missing": 12,
+      "interval_good": {
+        "n": 74,
+        "median": 100.0,
+        "p95": 100.023,
+        "max": 700.001
+      },
+      "interval_first_third": 150.0003,
+      "interval_last_third": 100.0003,
+      "interval_multiples": [
+        1,
+        3,
+        5,
+        7
+      ],
+      "gaps": 3,
+      "latency": {
+        "n": 75,
+        "median": 129.336,
+        "p95": 555.185,
+        "max": 857.236
+      },
+      "lat_first_third": 295.84,
+      "lat_last_third": 148.22,
+      "callback": {
+        "n": 75,
+        "median": 0.075,
+        "p95": 182.124,
+        "max": 799.77
+      },
+      "callback_by_mode": {
+        "idle": {
+          "n": 25,
+          "median": 0.104,
+          "p95": 0.118,
+          "max": 0.123
+        },
+        "series": {
+          "n": 50,
+          "median": 0.071,
+          "p95": 187.465,
+          "max": 799.77
+        }
+      },
+      "slow_callbacks": 8,
+      "mode_counts": {
+        "idle": 25,
+        "series": 50
+      }
+    },
+    {
+      "label": "series_tmpfs_r2",
+      "file": "20261004_172244_series_tmpfs_r2_4feab3769a8e_frames.json",
+      "elapsed_s": 302.636,
+      "frames": 12,
+      "period_ms": 100.0,
+      "camera_info": {
+        "ExposureTime": 11000,
+        "AnalogueGain": 1.0,
+        "FrameDuration": 100000,
+        "SensorTimestamp": 4153142541273000,
+        "buffer_count": 6,
+        "configured_controls": {
+          "NoiseReductionMode": "NoiseReductionModeEnum.Fast",
+          "FrameDurationLimits": [
+            33333,
+            33333
+          ]
+        }
+      },
+      "unpaired": 0,
+      "truncated": 0,
+      "seq_missing": 0,
+      "ts_missing": 6,
+      "interval_good": {
+        "n": 11,
+        "median": 100.004,
+        "p95": 400.002,
+        "max": 500.004
+      },
+      "interval_first_third": 100.0,
+      "interval_last_third": 233.336,
+      "interval_multiples": [
+        1,
+        3,
+        5
+      ],
+      "gaps": 2,
+      "latency": {
+        "n": 12,
+        "median": 511.212,
+        "p95": 6093.099,
+        "max": 6154.304
+      },
+      "lat_first_third": 216.44,
+      "lat_last_third": 3302.37,
+      "callback": {
+        "n": 12,
+        "median": 190.559,
+        "p95": 2717.322,
+        "max": 5776.823
+      },
+      "callback_by_mode": {
+        "idle": {
+          "n": 1,
+          "median": 0.071,
+          "p95": 0.071,
+          "max": 0.071
+        },
+        "series": {
+          "n": 11,
+          "median": 191.276,
+          "p95": 2995.459,
+          "max": 5776.823
+        }
+      },
+      "slow_callbacks": 11,
+      "mode_counts": {
+        "idle": 1,
+        "series": 11
+      }
+    },
+    {
+      "label": "idle_r3",
+      "file": "20261004_172747_idle_r3_86ed479bcf8f_frames.json",
+      "elapsed_s": 12.008,
+      "frames": 0,
+      "period_ms": 100.0,
+      "camera_info": {
+        "ExposureTime": 11000,
+        "AnalogueGain": 1.0,
+        "FrameDuration": 100000,
+        "SensorTimestamp": 4153144341286000,
+        "buffer_count": 6,
+        "configured_controls": {
+          "NoiseReductionMode": "NoiseReductionModeEnum.Fast",
+          "FrameDurationLimits": [
+            33333,
+            33333
+          ]
+        }
+      },
+      "unpaired": 0,
+      "truncated": 0,
+      "seq_missing": null,
+      "ts_missing": null,
+      "gaps": 0,
+      "latency": {
+        "n": 0,
+        "median": null,
+        "p95": null,
+        "max": null
+      },
+      "callback": {
+        "n": 0,
+        "median": null,
+        "p95": null,
+        "max": null
+      },
+      "callback_by_mode": {},
+      "slow_callbacks": 0,
+      "mode_counts": {}
+    }
+  ],
+  "gaps": [
+    {
+      "label": "legacy_r1",
+      "index": 106,
+      "seq_before": 764,
+      "seq_after": 765,
+      "seq_missing": 0,
+      "interval_ms": 999.998,
+      "ts_missing": 9,
+      "mode_before": "idle",
+      "mode_after": "idle",
+      "cb_before_ms": 0.024,
+      "max_cb_prev5_ms": 1152.552,
+      "lat_before_ms": 914.527,
+      "lat_after_ms": 129.467
+    },
+    {
+      "label": "legacy_tmpfs_r1",
+      "index": 106,
+      "seq_before": 892,
+      "seq_after": 893,
+      "seq_missing": 0,
+      "interval_ms": 899.994,
+      "ts_missing": 8,
+      "mode_before": "idle",
+      "mode_after": "idle",
+      "cb_before_ms": 0.023,
+      "max_cb_prev5_ms": 1105.291,
+      "lat_before_ms": 866.28,
+      "lat_after_ms": 128.875
+    },
+    {
+      "label": "series_r1",
+      "index": 7,
+      "seq_before": 921,
+      "seq_after": 922,
+      "seq_missing": 0,
+      "interval_ms": 300.004,
+      "ts_missing": 2,
+      "mode_before": "series",
+      "mode_after": "series",
+      "cb_before_ms": 159.848,
+      "max_cb_prev5_ms": 184.593,
+      "lat_before_ms": 587.68,
+      "lat_after_ms": 469.749
+    },
+    {
+      "label": "series_r1",
+      "index": 9,
+      "seq_before": 923,
+      "seq_after": 924,
+      "seq_missing": 0,
+      "interval_ms": 500.002,
+      "ts_missing": 4,
+      "mode_before": "series",
+      "mode_after": "series",
+      "cb_before_ms": 169.764,
+      "max_cb_prev5_ms": 186.009,
+      "lat_before_ms": 563.562,
+      "lat_after_ms": 245.876
+    },
+    {
+      "label": "series_r1",
+      "index": 14,
+      "seq_before": 928,
+      "seq_after": 929,
+      "seq_missing": 0,
+      "interval_ms": 299.996,
+      "ts_missing": 2,
+      "mode_before": "series",
+      "mode_after": "series",
+      "cb_before_ms": 0.03,
+      "max_cb_prev5_ms": 164.569,
+      "lat_before_ms": 203.79,
+      "lat_after_ms": 128.919
+    },
+    {
+      "label": "series_tmpfs_r1",
+      "index": 8,
+      "seq_before": 1005,
+      "seq_after": 1006,
+      "seq_missing": 0,
+      "interval_ms": 600.011,
+      "ts_missing": 5,
+      "mode_before": "series",
+      "mode_after": "series",
+      "cb_before_ms": 189.757,
+      "max_cb_prev5_ms": 409.884,
+      "lat_before_ms": 953.461,
+      "lat_after_ms": 561.775
+    },
+    {
+      "label": "series_tmpfs_r1",
+      "index": 10,
+      "seq_before": 1007,
+      "seq_after": 1008,
+      "seq_missing": 0,
+      "interval_ms": 500.015,
+      "ts_missing": 4,
+      "mode_before": "series",
+      "mode_after": "series",
+      "cb_before_ms": 206.752,
+      "max_cb_prev5_ms": 206.752,
+      "lat_before_ms": 666.025,
+      "lat_after_ms": 389.967
+    },
+    {
+      "label": "series_tmpfs_r1",
+      "index": 13,
+      "seq_before": 1010,
+      "seq_after": 1011,
+      "seq_missing": 0,
+      "interval_ms": 299.985,
+      "ts_missing": 2,
+      "mode_before": "series",
+      "mode_after": "series",
+      "cb_before_ms": 184.309,
+      "max_cb_prev5_ms": 206.752,
+      "lat_before_ms": 588.311,
+      "lat_after_ms": 491.091
+    },
+    {
+      "label": "series_tmpfs_r1",
+      "index": 15,
+      "seq_before": 1012,
+      "seq_after": 1013,
+      "seq_missing": 0,
+      "interval_ms": 499.989,
+      "ts_missing": 4,
+      "mode_before": "series",
+      "mode_after": "series",
+      "cb_before_ms": 194.477,
+      "max_cb_prev5_ms": 198.819,
+      "lat_before_ms": 597.052,
+      "lat_after_ms": 306.306
+    },
+    {
+      "label": "series_tmpfs_r1",
+      "index": 18,
+      "seq_before": 1015,
+      "seq_after": 1016,
+      "seq_missing": 0,
+      "interval_ms": 200.0,
+      "ts_missing": 1,
+      "mode_before": "series",
+      "mode_after": "series",
+      "cb_before_ms": 0.108,
+      "max_cb_prev5_ms": 214.897,
+      "lat_before_ms": 546.356,
+      "lat_after_ms": 352.183
+    },
+    {
+      "label": "series_tmpfs_r1",
+      "index": 20,
+      "seq_before": 1017,
+      "seq_after": 1018,
+      "seq_missing": 0,
+      "interval_ms": 299.999,
+      "ts_missing": 2,
+      "mode_before": "series",
+      "mode_after": "idle",
+      "cb_before_ms": 0.196,
+      "max_cb_prev5_ms": 214.897,
+      "lat_before_ms": 268.678,
+      "lat_after_ms": 129.05
+    },
+    {
+      "label": "legacy_r2",
+      "index": 106,
+      "seq_before": 1269,
+      "seq_after": 1270,
+      "seq_missing": 0,
+      "interval_ms": 1700.001,
+      "ts_missing": 16,
+      "mode_before": "idle",
+      "mode_after": "idle",
+      "cb_before_ms": 0.031,
+      "max_cb_prev5_ms": 1921.107,
+      "lat_before_ms": 1685.703,
+      "lat_after_ms": 329.348
+    },
+    {
+      "label": "legacy_tmpfs_r2",
+      "index": 106,
+      "seq_before": 1400,
+      "seq_after": 1401,
+      "seq_missing": 0,
+      "interval_ms": 1099.994,
+      "ts_missing": 10,
+      "mode_before": "idle",
+      "mode_after": "idle",
+      "cb_before_ms": 0.038,
+      "max_cb_prev5_ms": 1251.202,
+      "lat_before_ms": 1016.951,
+      "lat_after_ms": 128.944
+    },
+    {
+      "label": "series_r2",
+      "index": 7,
+      "seq_before": 1429,
+      "seq_after": 1430,
+      "seq_missing": 0,
+      "interval_ms": 299.997,
+      "ts_missing": 2,
+      "mode_before": "series",
+      "mode_after": "series",
+      "cb_before_ms": 180.977,
+      "max_cb_prev5_ms": 189.643,
+      "lat_before_ms": 580.128,
+      "lat_after_ms": 476.52
+    },
+    {
+      "label": "series_r2",
+      "index": 9,
+      "seq_before": 1431,
+      "seq_after": 1432,
+      "seq_missing": 0,
+      "interval_ms": 500.004,
+      "ts_missing": 4,
+      "mode_before": "series",
+      "mode_after": "series",
+      "cb_before_ms": 799.77,
+      "max_cb_prev5_ms": 799.77,
+      "lat_before_ms": 544.495,
+      "lat_after_ms": 857.236
+    },
+    {
+      "label": "series_r2",
+      "index": 12,
+      "seq_before": 1434,
+      "seq_after": 1435,
+      "seq_missing": 0,
+      "interval_ms": 700.001,
+      "ts_missing": 6,
+      "mode_before": "series",
+      "mode_after": "series",
+      "cb_before_ms": 0.127,
+      "max_cb_prev5_ms": 799.77,
+      "lat_before_ms": 668.633,
+      "lat_after_ms": 129.174
+    },
+    {
+      "label": "series_tmpfs_r2",
+      "index": 7,
+      "seq_before": 1512,
+      "seq_after": 1513,
+      "seq_missing": 0,
+      "interval_ms": 300.001,
+      "ts_missing": 2,
+      "mode_before": "series",
+      "mode_after": "series",
+      "cb_before_ms": 186.135,
+      "max_cb_prev5_ms": 202.039,
+      "lat_before_ms": 654.359,
+      "lat_after_ms": 560.466
+    },
+    {
+      "label": "series_tmpfs_r2",
+      "index": 9,
+      "seq_before": 1514,
+      "seq_after": 1515,
+      "seq_missing": 0,
+      "interval_ms": 500.004,
+      "ts_missing": 4,
+      "mode_before": "series",
+      "mode_after": "series",
+      "cb_before_ms": 188.016,
+      "max_cb_prev5_ms": 189.842,
+      "lat_before_ms": 654.002,
+      "lat_after_ms": 358.145
+    }
+  ]
+}

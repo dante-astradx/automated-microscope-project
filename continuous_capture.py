@@ -74,6 +74,13 @@ RESERVED_SIDECAR_KEYS = frozenset({
 
 _WRITER_POLL_SECONDS = 0.05
 
+# Returned by ContinuousSeries._gate_frame() to skip a frame without error.
+_GATE_SKIP = "skip"
+
+# Batch error: a frame arrived without the sensor timestamp needed to schedule
+# the inter-series pause.
+ERROR_MISSING_TIMESTAMP = "MISSING_TIMESTAMP"
+
 
 def _require_positive_int(name, value):
     if isinstance(value, bool) or not isinstance(value, (int, np.integer)) or value < 1:
@@ -326,15 +333,23 @@ class ContinuousSeries:
     def add_frame(self, frame, timestamp_us=None):
         """Consume one frame; safe to call from the camera callback.
 
-        Returns True if the frame was accumulated without error, and False if the
-        series is not capturing, the frame was rejected, or its completed image
-        could not be queued.
+        Returns True if the frame was accumulated without error (or was
+        deliberately skipped by a subclass, such as during a batch's
+        inter-series pause), and False if the series is not capturing, the frame
+        was rejected, or its completed image could not be queued.
         """
         with self._capture_lock:
             with self._lock:
                 if not self._capture_active:
                     return False
                 next_index = self._captured + 1
+                gate = self._gate_frame(timestamp_us)
+
+            if gate == _GATE_SKIP:
+                return True
+            if gate is not None:  # an error dict: stop capture
+                self._end_capture(STATE_FAILED, gate)
+                return False
 
             try:
                 group = self._accumulator.add_frame(frame, timestamp_us)
@@ -348,7 +363,7 @@ class ContinuousSeries:
             if group is None:
                 return True
 
-            filename = f"{self.base_filename}_image{next_index}"
+            filename = self._filename(next_index)
             enqueue_monotonic = time.monotonic()
             item = QueuedImage(
                 image_index=next_index,
@@ -371,6 +386,7 @@ class ContinuousSeries:
                 else:
                     self._captured += 1
                     self._queue_high_watermark = max(self._queue_high_watermark, self._queue.qsize())
+                    self._on_image_queued(next_index, group)
                     if self._captured == self.image_count:
                         self._capture_active = False
                         self._state = STATE_DRAINING
@@ -451,6 +467,20 @@ class ContinuousSeries:
             }
         snapshot.update(memory_snapshot())
         return snapshot
+
+    def _filename(self, image_index):
+        """Output basename (no extension) for one image."""
+        return f"{self.base_filename}_image{image_index}"
+
+    # Subclass hooks. Both are called with _capture_lock and _lock held, so they
+    # must not acquire either lock or block. A single series uses no-op versions.
+
+    def _gate_frame(self, timestamp_us):
+        """Decide whether to use a frame: None (use it), _GATE_SKIP, or an error dict."""
+        return None
+
+    def _on_image_queued(self, image_index, group):
+        """Called after an image is queued and counted as captured."""
 
     def _make_error(self, code, message, image_index=None, filename=None):
         return {
@@ -580,4 +610,229 @@ class ContinuousSeries:
                     )
                 self._state = STATE_FAILED
             self._writing_index = None
+
+
+
+# --- Repeated series (batch) --------------------------------------------------
+
+# Extra sidecar fields owned by a batch; caller metadata cannot set these
+# either. Kept separate so single-series validation is unchanged.
+BATCH_RESERVED_SIDECAR_KEYS = RESERVED_SIDECAR_KEYS | frozenset({
+    "batch_id",
+    "series_index",
+    "series_count",
+    "batch_image_index",
+    "inter_series_pause_us",
+    "inter_series_gap_us",
+})
+
+
+class ContinuousSeriesBatch(ContinuousSeries):
+    """``series_count`` back-to-back series of ``image_count`` images each.
+
+    The camera service schedules the series itself, so the gap between series
+    does not depend on client polling or on the writer draining. After the last
+    image of series *i* is queued, frames are ignored until one arrives whose
+    sensor timestamp is at least ``inter_series_pause_us`` after the last
+    contributing frame of series *i*; that frame is the first frame of series
+    *i + 1*. The pause is therefore a minimum: the observed gap is rounded up to
+    the camera's frame cadence and is reported per boundary.
+
+    Frames are only ignored during the gap. The callback never sleeps or
+    blocks, and the writer keeps draining earlier images while later series are
+    captured.
+
+    All series share one bounded writer queue and one writer, so
+    ``queue_capacity`` bounds the backlog for the whole batch. A full queue
+    overloads the batch exactly as it does a single series.
+
+    Each image is saved as ``<base>_series<S>_image<I>`` with a sidecar that
+    holds the per-series ``image_index``/``image_count`` plus ``batch_id``,
+    ``series_index``, ``series_count``, ``inter_series_pause_us`` and a
+    per-series ``series_id`` (``<batch_id>-s<S>``).
+
+    In status and error dicts, ``image_index`` is the batch-wide image number
+    (1 .. image_count * series_count). Errors also carry ``series_index`` and
+    ``series_image_index``.
+    """
+
+    def __init__(
+        self,
+        image_count,
+        series_count,
+        nframes,
+        output_dir,
+        base_filename,
+        metadata=None,
+        inter_series_pause_us=0,
+        queue_capacity=DEFAULT_QUEUE_CAPACITY,
+        width=DEFAULT_ACTIVE_WIDTH,
+        batch_id=None,
+        logger=print,
+    ):
+        self.images_per_series = _require_positive_int("image_count", image_count)
+        self.series_count = _require_positive_int("series_count", series_count)
+        if (isinstance(inter_series_pause_us, bool)
+                or not isinstance(inter_series_pause_us, (int, np.integer))
+                or inter_series_pause_us < 0):
+            raise ValueError(
+                "inter_series_pause_us must be a non-negative integer, "
+                f"got {inter_series_pause_us!r}"
+            )
+        reserved = BATCH_RESERVED_SIDECAR_KEYS.intersection(metadata or {})
+        if reserved:
+            raise ValueError(f"metadata cannot set reserved sidecar keys: {sorted(reserved)}")
+
+        super().__init__(
+            image_count=self.images_per_series * self.series_count,
+            nframes=nframes,
+            output_dir=output_dir,
+            base_filename=base_filename,
+            metadata=metadata,
+            queue_capacity=queue_capacity,
+            width=width,
+            series_id=batch_id,
+            logger=logger,
+        )
+        self.batch_id = self.series_id
+        self.inter_series_pause_us = int(inter_series_pause_us)
+        self.child_series_ids = [
+            f"{self.batch_id}-s{n}" for n in range(1, self.series_count + 1)
+        ]
+
+        # Inter-series gap state, protected by _lock.
+        self._awaiting_next_series = False
+        self._gap_threshold_us = None      # first acceptable timestamp, or None
+        self._gap_last_timestamp_us = None  # last frame of the previous series
+        self._gap_skipped_current = 0
+        self._gap_frames_skipped = 0
+        self._boundaries = []
+
+    def _position(self, image_index):
+        """Return (series_index, image index within that series) for a batch index."""
+        zero_based = image_index - 1
+        return (zero_based // self.images_per_series + 1,
+                zero_based % self.images_per_series + 1)
+
+    def _filename(self, image_index):
+        series_index, local_index = self._position(image_index)
+        return f"{self.base_filename}_series{series_index}_image{local_index}"
+
+    # Hooks. Called with _capture_lock and _lock held; they do not lock or block.
+
+    def _on_image_queued(self, image_index, group):
+        series_index, local_index = self._position(image_index)
+        if local_index == self.images_per_series and series_index < self.series_count:
+            timestamps = group.sensor_timestamps_us
+            self._awaiting_next_series = True
+            self._gap_last_timestamp_us = timestamps[-1] if timestamps else None
+            self._gap_skipped_current = 0
+
+    def _gate_frame(self, timestamp_us):
+        if not self._awaiting_next_series:
+            return None
+        next_index = self._captured + 1
+        series_index, _ = self._position(next_index)
+        last = self._gap_last_timestamp_us
+
+        if self.inter_series_pause_us > 0 and (timestamp_us is None or last is None):
+            return self._make_error(
+                ERROR_MISSING_TIMESTAMP,
+                f"Cannot schedule the {self.inter_series_pause_us} us pause before series "
+                f"{series_index}: a sensor timestamp is missing",
+                image_index=next_index,
+            )
+        if timestamp_us is not None and last is not None:
+            timestamp_us = int(timestamp_us)
+            if timestamp_us < last:
+                return self._make_error(
+                    ERROR_INVALID_FRAME,
+                    f"Sensor timestamp went backwards before series {series_index} "
+                    f"({timestamp_us} us after {last} us)",
+                    image_index=next_index,
+                )
+            if timestamp_us - last < self.inter_series_pause_us:
+                self._gap_skipped_current += 1
+                self._gap_frames_skipped += 1
+                return _GATE_SKIP
+
+        # This frame starts the next series.
+        self._boundaries.append({
+            "before_series_index": series_index,
+            "previous_last_timestamp_us": last,
+            "first_timestamp_us": None if timestamp_us is None else int(timestamp_us),
+            "observed_gap_us": (
+                None if timestamp_us is None or last is None else int(timestamp_us) - last
+            ),
+            "frames_skipped": self._gap_skipped_current,
+        })
+        self._awaiting_next_series = False
+        self._gap_last_timestamp_us = None
+        self._gap_skipped_current = 0
+        return None
+
+    def _boundary_before(self, series_index):
+        for boundary in self._boundaries:
+            if boundary["before_series_index"] == series_index:
+                return boundary
+        return None
+
+    def _build_sidecar(self, image_index, filename, group, enqueue_monotonic):
+        # Called with _capture_lock held; boundaries are only changed under it.
+        sidecar = super()._build_sidecar(image_index, filename, group, enqueue_monotonic)
+        series_index, local_index = self._position(image_index)
+        boundary = self._boundary_before(series_index) if local_index == 1 else None
+        sidecar.update({
+            "series_id": self.child_series_ids[series_index - 1],
+            "image_index": local_index,
+            "image_count": self.images_per_series,
+            "batch_id": self.batch_id,
+            "batch_image_index": image_index,
+            "series_index": series_index,
+            "series_count": self.series_count,
+            "inter_series_pause_us": self.inter_series_pause_us,
+            # Only on the first image of series 2+: the measured gap from the
+            # previous series' last frame to this image's first frame.
+            "inter_series_gap_us": boundary["observed_gap_us"] if boundary else None,
+        })
+        return sidecar
+
+    def _make_error(self, code, message, image_index=None, filename=None):
+        error = super()._make_error(code, message, image_index=image_index, filename=filename)
+        if image_index is not None:
+            series_index, local_index = self._position(image_index)
+        else:
+            series_index = local_index = None
+        error["series_index"] = series_index
+        error["series_image_index"] = local_index
+        return error
+
+    def status_snapshot(self):
+        """Single-series status fields plus batch progress.
+
+        ``requested_images``, ``captured_images`` and ``written_images`` are
+        batch totals. ``current_series_index`` and ``series_captured_images``
+        describe the series being captured (or the next one during a pause).
+        """
+        snapshot = super().status_snapshot()
+        with self._lock:
+            captured = self._captured
+            awaiting = self._awaiting_next_series
+            skipped = self._gap_frames_skipped
+            boundaries = [dict(b) for b in self._boundaries]
+        current = min(captured // self.images_per_series + 1, self.series_count)
+        snapshot.update({
+            "batch_id": self.batch_id,
+            "series_ids": list(self.child_series_ids),
+            "series_count": self.series_count,
+            "images_per_series": self.images_per_series,
+            "inter_series_pause_us": self.inter_series_pause_us,
+            "current_series_index": current,
+            "series_captured_images": captured - (current - 1) * self.images_per_series,
+            "completed_series": captured // self.images_per_series,
+            "awaiting_next_series": awaiting,
+            "frames_skipped_in_pauses": skipped,
+            "boundaries": boundaries,
+        })
+        return snapshot
 
