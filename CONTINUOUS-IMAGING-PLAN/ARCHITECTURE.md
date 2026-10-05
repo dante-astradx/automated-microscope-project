@@ -168,10 +168,14 @@ captured/written counts.
 
 ### 4. Writer queue and memory ownership
 
-Use a bounded `queue.Queue` or equivalent. The queue contains a completed,
-independent float32 mean array and immutable metadata (filename, image sequence,
-exposure, gain, magnification, Z, and timestamps). Do not put a reference to a
-sum array that is reset/reused by the callback.
+Use a bounded `queue.Queue` or equivalent. Each queued item holds one completed
+image and immutable metadata (filename, image sequence, exposure, gain,
+magnification, Z, and timestamps). The image is either a read-only float32 mean
+array (`nframes == 1`) or a `LazyMean` that owns the group's uint32 sum
+(`nframes > 1`; the writer computes the float32 mean from it, see section 5).
+Either way the callback has handed the buffer over: it never writes to a queued
+buffer again. Buffers come back to the callback only through a `BufferPool`,
+after the writer has finished with them.
 
 The initial design is a single writer to preserve file ordering and reduce
 storage contention. Queue size is configured in **images**. The default capacity
@@ -182,7 +186,7 @@ being written in addition to the queued images. A full queue must trigger the
 defined overload policy; no silent frame drops.
 
 For 4056 × 3040 pixels, one float32 output mean is about 49 MB (47 MiB), so the
-default 3 queued images hold about 141 MiB of mean arrays. Peak memory is higher
+default 15 queued images hold about 705 MiB of mean arrays. Peak memory is higher
 than queue capacity times this amount because of active sums, input/camera
 buffers, and writer temporaries. Measure actual resident memory on the Raspberry
 Pi.
@@ -211,10 +215,36 @@ Pi.
 - `nframes` is any positive integer; the new series path has no configured
   `nframes` cap. Practical values and sustainable continuous-acquisition ranges
   will be established through staged software and hardware tests.
-- Use the existing `uint32` running-sum accumulator for the initial
-  implementation. Do not add sum-of-squares state for the new path because the
-  variance page is omitted. A completed mean is produced as a separate float32
-  array before the sum buffer is reset/reused.
+- Use the existing `uint32` running-sum accumulator. Do not add sum-of-squares
+  state for the new path because the variance page is omitted.
+- **Callback cost (resolved 2026-10-05).** The camera callback has one frame
+  period (100 ms at 10 fps) per frame. Before this change, a series image took
+  about 176 ms in the callback, so the camera dropped frames:
+  - about 56 ms to add the frame into the sum;
+  - about 104 ms to build a fresh float32 mean, of which about 46 ms was page
+    faults on the new 47 MiB array;
+  - about 16 ms to zero the sum.
+
+  There are now two paths. Neither changes the output: one single-page float32
+  mean TIFF per image, with the same values.
+  - **`nframes == 1`:** the mean of one frame is that frame. The cropped frame
+    is converted in one pass into a recycled float32 buffer:
+    `np.divide(active, float32(1), out=mean, dtype=float32)`. This is exact,
+    because every `uint16` value is representable in float32, and it is
+    bit-identical to the old sum-then-divide result. There is no running sum
+    and no zeroing.
+  - **`nframes > 1`:** the callback only adds frames into a `uint32` sum taken
+    from a zeroing `BufferPool`. On a group's last frame, the callback hands the
+    sum itself to the writer as a `LazyMean`. The writer thread computes the
+    mean with the same arithmetic as before (`np.divide(sum, nframes)` into a
+    new float32 array), writes the TIFF, and then releases the sum to the pool.
+    The pool zeroes the sum in the writer thread, not in the callback.
+  - **Buffer pools:** `BufferPool` never blocks the callback. When no recycled
+    buffer is free, it allocates a fresh one; that is slower (page faults) but
+    always correct. The status fields `pool_free_means`, `pool_free_sums`,
+    `pool_reused_buffers` and `pool_fresh_allocations` make recycling
+    observable. A rising `pool_fresh_allocations` count means the writer is
+    behind. The pools are emptied when a series finishes.
 - No configured `nframes` cap does not eliminate integer-overflow risk. Before
   scientific use, verify the actual input sample range and test accumulator
   correctness across the intended `nframes` range. If the maximum intended sum
@@ -337,8 +367,9 @@ commands explicitly.
 
 ### Queue capacity and overload response — resolved for initial implementation
 
-- Default writer-queue capacity is 3 images, configurable per series. It is a
-  conservative starting value for hardware testing, not a tuned limit.
+- Default writer-queue capacity is 15 images, configurable per series. The
+  initial value of 3 was too small on hardware: the SD-card writer fell behind
+  and series ended as overloaded (frame-loss diagnostics, 2026-10-04).
 - Overload policy: if a completed image cannot be placed on the queue because
   the queue is full, the series enters the terminal `OVERLOADED` state with a
   latched error. The image that could not be queued is not counted as written,

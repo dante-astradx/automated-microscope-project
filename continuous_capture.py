@@ -30,14 +30,16 @@ import numpy as np
 import tifffile
 
 import config as c
+import frame_diagnostics as fd
 
 # Active sensor width. Raw buffer rows are wider (4064 samples) because of row
 # padding; frames are cropped to this width, as the live preview already does.
 DEFAULT_ACTIVE_WIDTH = 4056
 
-# Conservative default writer-queue capacity, in images, for initial hardware
-# testing. Each full-resolution float32 mean is about 47 MiB.
-DEFAULT_QUEUE_CAPACITY = 3
+# Default writer-queue capacity, in images. Each full-resolution float32 mean
+# is about 47 MiB, so a full queue holds about 705 MiB. Hardware tests showed 3
+# was too small: the SD-card writer fell behind and series ended as overloaded.
+DEFAULT_QUEUE_CAPACITY = 15
 
 # Series states. Values are lowercase to match the planned ZeroMQ status replies.
 STATE_ACCEPTED = "accepted"
@@ -118,11 +120,173 @@ def memory_snapshot():
     }
 
 
+# Free buffers kept per BufferPool. A few are enough for the camera callback to
+# find a recycled, already-faulted array in steady state; the writer queue, not
+# the pool, bounds how many images are in flight.
+DEFAULT_POOL_BUFFERS = 4
+
+
+class BufferPool:
+    """Thread-safe pool of full-size arrays, recycled between the callback and writer.
+
+    Its purpose is speed: a fresh 47 MiB array costs about 46 ms of page faults
+    the first time it is written, which is too slow for the camera callback. A
+    recycled array was already touched, so writing it again costs only memory
+    bandwidth.
+
+    ``acquire(shape, dtype)`` never blocks: it pops a free array of that shape
+    and dtype, or allocates a fresh one when none is free (the fallback under
+    load). With ``zero=True`` every acquired array is all zeros: fresh arrays
+    come from ``np.zeros`` and released arrays are zeroed by ``release()``, in
+    the releasing thread (the writer), not in the callback. With ``zero=False``
+    a recycled array holds stale data, for callers that overwrite every element.
+
+    ``release(array)`` makes the array writeable again and keeps it if fewer
+    than ``max_free`` arrays of its kind are free; otherwise it is dropped and
+    freed normally. Only release an array that nothing else will read or write.
+    """
+
+    def __init__(self, zero=True, max_free=DEFAULT_POOL_BUFFERS):
+        self.zero = bool(zero)
+        self.max_free = max(0, int(max_free))
+        self._lock = threading.Lock()  # leaf lock: never held while taking another
+        self._free = {}
+        self._reused = 0
+        self._allocated = 0
+
+    @staticmethod
+    def _key(shape, dtype):
+        return (tuple(shape), np.dtype(dtype).str)
+
+    def acquire(self, shape, dtype):
+        """Return an array of ``shape`` and ``dtype`` (zeroed if ``zero``). Never blocks."""
+        key = self._key(shape, dtype)
+        with self._lock:
+            free = self._free.get(key)
+            if free:
+                self._reused += 1
+                return free.pop()
+            self._allocated += 1
+        return np.zeros(shape, dtype=dtype) if self.zero else np.empty(shape, dtype=dtype)
+
+    def release(self, array):
+        """Return ``array`` to the pool (zeroing it first if ``zero``)."""
+        if not isinstance(array, np.ndarray) or not array.flags.owndata:
+            return  # views and foreign buffers are never pooled
+        key = self._key(array.shape, array.dtype)
+        with self._lock:
+            if len(self._free.get(key, ())) >= self.max_free:
+                return
+        array.flags.writeable = True
+        if self.zero:
+            array.fill(0)
+        with self._lock:
+            free = self._free.setdefault(key, [])
+            if len(free) < self.max_free:
+                free.append(array)
+
+    def clear(self):
+        """Drop every free array (frees the memory). Later acquires allocate."""
+        with self._lock:
+            self._free = {}
+
+    def stats(self):
+        """Free arrays and how acquires were served, for status reporting."""
+        with self._lock:
+            return {
+                "free": sum(len(v) for v in self._free.values()),
+                "reused": self._reused,
+                "allocated": self._allocated,
+            }
+
+
+class _ReadOnlyFlags:
+    """The part of ndarray.flags that callers check on a completed mean."""
+
+    __slots__ = ()
+    writeable = False
+
+
+class LazyMean:
+    """The mean of a completed group, computed when the writer first reads it.
+
+    Holds the group's uint32 running sum and ``nframes``. ``.mean`` computes the
+    float32 mean once, with the same arithmetic as before (a new float32 array,
+    ``np.divide(sum, nframes, out=arr)``), marks it read-only, caches it and
+    returns it. This moves the divide off the camera thread: only the writer
+    thread reads ``.mean``.
+
+    The sum buffer is owned by the LazyMean. Nothing may reuse or modify it until
+    ``.mean`` has been computed; after that, ``release_sum()`` hands it back.
+
+    It also behaves enough like the array (``shape``, ``dtype``, ``flags``,
+    indexing and ``np.asarray``) for code that inspects a completed group; any
+    of those computes the mean.
+    """
+
+    flags = _ReadOnlyFlags()
+
+    def __init__(self, sum_array, nframes):
+        self._sum = sum_array
+        self.nframes = nframes
+        self._mean = None
+        self._lock = threading.Lock()
+
+    @property
+    def mean(self):
+        with self._lock:
+            if self._mean is None:
+                mean = np.empty(self._sum.shape, dtype=np.float32)
+                np.divide(self._sum, self.nframes, out=mean)
+                mean.flags.writeable = False
+                self._mean = mean
+            return self._mean
+
+    @property
+    def computed(self):
+        return self._mean is not None
+
+    def release_sum(self, pool):
+        """After ``.mean`` exists, give the sum buffer to ``pool``. Returns True if released."""
+        with self._lock:
+            if self._mean is None or self._sum is None:
+                return False
+            sum_array, self._sum = self._sum, None
+        pool.release(sum_array)
+        return True
+
+    @property
+    def shape(self):
+        return self.mean.shape
+
+    @property
+    def dtype(self):
+        return self.mean.dtype
+
+    def __array__(self, dtype=None, copy=None):
+        mean = self.mean
+        if dtype is not None and np.dtype(dtype) != mean.dtype:
+            return mean.astype(dtype)
+        return mean.copy() if copy else mean
+
+    def __getitem__(self, index):
+        return self.mean[index]
+
+
+def resolve_mean(mean):
+    """The float32 mean array behind a CompletedGroup/QueuedImage ``mean``."""
+    return mean.mean if isinstance(mean, LazyMean) else mean
+
+
 @dataclass(frozen=True)
 class CompletedGroup:
-    """One finished group of ``nframes`` input frames."""
+    """One finished group of ``nframes`` input frames.
 
-    mean: np.ndarray
+    ``mean`` is a read-only float32 array (``nframes == 1``, possibly a pooled
+    buffer) or a LazyMean (``nframes > 1``). Use ``resolve_mean()`` for the array.
+    """
+
+    mean: object
     start_monotonic: float
     sensor_timestamps_us: tuple
 
@@ -130,16 +294,28 @@ class CompletedGroup:
 class FrameGroupAccumulator:
     """Accumulate consecutive raw frames into float32 mean images.
 
-    add_frame() consumes each frame immediately: the active columns are added
-    into a uint32 running sum and no reference to the input frame is kept. This
-    matters because the camera callback's buffer is only valid during the
-    callback.
+    add_frame() consumes each frame immediately and keeps no reference to the
+    input frame. This matters because the camera callback's buffer is only valid
+    during the callback. The frame that completes a group is never counted in
+    the next group, and no extra frame is needed to trigger completion.
 
-    After exactly ``nframes`` frames, add_frame() returns a CompletedGroup whose
-    ``mean`` is a new, read-only float32 array independent of the running sum.
-    The sum buffer is then zeroed and reused. The frame that completes a group is
-    never counted in the next group, and no extra frame is needed to trigger
-    completion.
+    Two paths, both cheap enough for the camera callback:
+
+    - ``nframes == 1``: the mean of one frame is that frame. The cropped frame
+      is converted straight into a float32 buffer from ``mean_pool`` (one pass;
+      no running sum, no divide by the group size, no zeroing). The returned
+      ``mean`` is that read-only array, and its values are exactly the frame's
+      values as float32.
+    - ``nframes > 1``: the active columns are added into a uint32 running sum
+      taken from ``sum_pool``. On a group's last frame the sum itself is handed
+      over as a LazyMean, and a fresh zeroed sum is taken from the pool for the
+      next group. The divide happens later, in the writer thread, with the same
+      arithmetic as before (``np.divide(sum, nframes)`` into a new float32 array).
+
+    The caller owns the returned buffers: once a completed mean has been written,
+    give the mean array back to ``mean_pool`` (``nframes == 1``) or the sum back
+    to ``sum_pool`` with ``LazyMean.release_sum`` (``nframes > 1``). Buffers that
+    are never released are simply garbage collected; the pool then allocates.
 
     There is no configured cap on ``nframes``. The running sum is uint32: with
     12-bit samples (maximum 4095) it cannot overflow below about 1,048,000
@@ -147,9 +323,13 @@ class FrameGroupAccumulator:
     real sample range on hardware before relying on very large groups.
     """
 
-    def __init__(self, nframes, width=DEFAULT_ACTIVE_WIDTH):
+    def __init__(self, nframes, width=DEFAULT_ACTIVE_WIDTH, mean_pool=None, sum_pool=None):
         self.nframes = _require_positive_int("nframes", nframes)
         self.width = _require_positive_int("width", width)
+        # Means are fully overwritten, so they need no zeroing; sums must start at 0.
+        self.mean_pool = mean_pool if mean_pool is not None else BufferPool(zero=False)
+        self.sum_pool = sum_pool if sum_pool is not None else BufferPool(zero=True)
+        self._shape = None
         self._sum = None
         self._count = 0
         self._start = None
@@ -160,13 +340,59 @@ class FrameGroupAccumulator:
         """Number of frames in the current, incomplete group."""
         return self._count
 
-    def add_frame(self, frame, timestamp_us=None):
+    def add_frame(self, frame, timestamp_us=None, timer=None):
         """Add one decoded uint16 frame. Return a CompletedGroup or None.
 
         Raises ValueError for a frame that is not a 2D uint16 array, is narrower
         than the active width, or changes shape mid-series. A rejected frame
         leaves the current group unchanged.
+
+        ``timer`` is an optional frame_diagnostics.StageTimer. When given, the
+        "accumulate" and "complete" stages are timed; it does not change what
+        this method does. At ``nframes == 1``, "accumulate" is only validation
+        and the crop view, and "complete" is the single conversion pass.
         """
+        with fd.stage(timer, fd.STAGE_ACCUMULATE):
+            active = self._validate(frame)
+            if self.nframes > 1:
+                if self._sum is None:
+                    self._sum = self.sum_pool.acquire(active.shape, np.uint32)
+                if self._count == 0:
+                    self._start = time.monotonic()
+                    self._timestamps = []
+                np.add(self._sum, active, out=self._sum)
+                self._count += 1
+                self._timestamps.append(None if timestamp_us is None else int(timestamp_us))
+
+        if self.nframes == 1:
+            with fd.stage(timer, fd.STAGE_COMPLETE):
+                start = time.monotonic()
+                mean = self.mean_pool.acquire(active.shape, np.float32)
+                # Exact: every uint16 value is representable in float32 and the
+                # divisor is 1, so this equals the old sum-then-divide result
+                # bit for bit, in one pass and with float32 arithmetic.
+                np.divide(active, np.float32(1), out=mean, dtype=np.float32)
+                mean.flags.writeable = False
+                return CompletedGroup(
+                    mean, start, (None if timestamp_us is None else int(timestamp_us),))
+
+        if self._count < self.nframes:
+            return None
+
+        with fd.stage(timer, fd.STAGE_COMPLETE):
+            # Hand the sum to the writer as a LazyMean (the divide happens there).
+            # The next group's first frame takes a zeroed sum from the pool, so
+            # nothing is zeroed here and the last group holds no spare buffer.
+            group = CompletedGroup(LazyMean(self._sum, self.nframes), self._start,
+                                   tuple(self._timestamps))
+            self._sum = None
+            self._count = 0
+            self._start = None
+            self._timestamps = []
+        return group
+
+    def _validate(self, frame):
+        """Check one frame and return its cropped active view (never copied or kept)."""
         if not isinstance(frame, np.ndarray) or frame.ndim != 2:
             raise ValueError("frame must be a 2D numpy array")
         if frame.dtype != np.uint16:
@@ -176,41 +402,26 @@ class FrameGroupAccumulator:
                 f"frame is {frame.shape[1]} columns wide, narrower than the "
                 f"active width {self.width}"
             )
-
-        # Crop row padding. This is a view; np.add consumes it and it is not kept.
+        # Crop row padding. This is a view; it is consumed and not kept.
         active = frame[:, :self.width]
-        if self._sum is None:
-            self._sum = np.zeros(active.shape, dtype=np.uint32)
-        elif self._sum.shape != active.shape:
+        if self._shape is None:
+            self._shape = active.shape
+        elif self._shape != active.shape:
             raise ValueError(
                 f"frame active shape {active.shape} does not match the series "
-                f"shape {self._sum.shape}"
+                f"shape {self._shape}"
             )
-
-        if self._count == 0:
-            self._start = time.monotonic()
-            self._timestamps = []
-
-        np.add(self._sum, active, out=self._sum)
-        self._count += 1
-        self._timestamps.append(None if timestamp_us is None else int(timestamp_us))
-
-        if self._count < self.nframes:
-            return None
-
-        # Same arithmetic as the legacy path (divide, store as float32), written
-        # straight into a new float32 array so no full-size temporary is kept.
-        mean = np.empty(self._sum.shape, dtype=np.float32)
-        np.divide(self._sum, self.nframes, out=mean)
-        mean.flags.writeable = False
-        group = CompletedGroup(mean, self._start, tuple(self._timestamps))
-        self.reset()
-        return group
+        return active
 
     def reset(self):
-        """Discard any incomplete group and zero the sum buffer for reuse."""
-        if self._sum is not None:
-            self._sum.fill(0)
+        """Discard any incomplete group.
+
+        Nothing is zeroed here: zeroing a full frame was a 16 ms pass in the
+        camera callback. A partly filled sum is simply dropped (and freed); the
+        next group takes an already-zeroed sum from the pool.
+        """
+        if self._count > 0:
+            self._sum = None
         self._count = 0
         self._start = None
         self._timestamps = []
@@ -293,7 +504,15 @@ class ContinuousSeries:
         }
         self._static_metadata.update(metadata)
 
-        self._accumulator = FrameGroupAccumulator(self.nframes, width=width)
+        # Recycled image buffers, so the camera callback rarely has to fault in a
+        # fresh 47 MiB array. nframes == 1 uses mean buffers (fully overwritten,
+        # never zeroed); nframes > 1 uses sum buffers, which the writer zeroes
+        # when it releases them. Emptied when the series finishes.
+        self._mean_pool = BufferPool(zero=False)
+        self._sum_pool = BufferPool(zero=True)
+        self._accumulator = FrameGroupAccumulator(self.nframes, width=width,
+                                                  mean_pool=self._mean_pool,
+                                                  sum_pool=self._sum_pool)
         self._queue = queue.Queue(maxsize=self.queue_capacity)
 
         # Lock order: _capture_lock, then _lock. Code holding _lock never
@@ -330,13 +549,17 @@ class ContinuousSeries:
         )
         self._writer_thread.start()
 
-    def add_frame(self, frame, timestamp_us=None):
+    def add_frame(self, frame, timestamp_us=None, timer=None):
         """Consume one frame; safe to call from the camera callback.
 
         Returns True if the frame was accumulated without error (or was
         deliberately skipped by a subclass, such as during a batch's
         inter-series pause), and False if the series is not capturing, the frame
         was rejected, or its completed image could not be queued.
+
+        ``timer`` is an optional frame_diagnostics.StageTimer (diagnostics
+        sessions only). It times the accumulator stages and "enqueue"; lock
+        waits and gating are left unattributed.
         """
         with self._capture_lock:
             with self._lock:
@@ -352,7 +575,10 @@ class ContinuousSeries:
                 return False
 
             try:
-                group = self._accumulator.add_frame(frame, timestamp_us)
+                if timer is None:
+                    group = self._accumulator.add_frame(frame, timestamp_us)
+                else:
+                    group = self._accumulator.add_frame(frame, timestamp_us, timer=timer)
             except ValueError as e:
                 self._end_capture(
                     STATE_FAILED,
@@ -363,34 +589,38 @@ class ContinuousSeries:
             if group is None:
                 return True
 
-            filename = self._filename(next_index)
-            enqueue_monotonic = time.monotonic()
-            item = QueuedImage(
-                image_index=next_index,
-                filename=filename,
-                mean=group.mean,
-                sidecar=self._build_sidecar(next_index, filename, group, enqueue_monotonic),
-                enqueue_monotonic=enqueue_monotonic,
-            )
+            # "enqueue" stage: sidecar build, waiting for _lock, the queue put and
+            # the counters. The overload handling below is not part of it.
+            with fd.stage(timer, fd.STAGE_ENQUEUE):
+                filename = self._filename(next_index)
+                enqueue_monotonic = time.monotonic()
+                item = QueuedImage(
+                    image_index=next_index,
+                    filename=filename,
+                    mean=group.mean,
+                    sidecar=self._build_sidecar(next_index, filename, group, enqueue_monotonic),
+                    enqueue_monotonic=enqueue_monotonic,
+                )
 
-            # Queue and count together under the status lock so a status snapshot
-            # never shows more images written than captured. put_nowait() does not
-            # block, and the writer never holds _lock while waiting on the queue.
-            overloaded = False
-            capture_done = False
-            with self._lock:
-                try:
-                    self._queue.put_nowait(item)
-                except queue.Full:
-                    overloaded = True
-                else:
-                    self._captured += 1
-                    self._queue_high_watermark = max(self._queue_high_watermark, self._queue.qsize())
-                    self._on_image_queued(next_index, group)
-                    if self._captured == self.image_count:
-                        self._capture_active = False
-                        self._state = STATE_DRAINING
-                        capture_done = True
+                # Queue and count together under the status lock so a status snapshot
+                # never shows more images written than captured. put_nowait() does not
+                # block, and the writer never holds _lock while waiting on the queue.
+                overloaded = False
+                capture_done = False
+                with self._lock:
+                    try:
+                        self._queue.put_nowait(item)
+                    except queue.Full:
+                        overloaded = True
+                    else:
+                        self._captured += 1
+                        self._queue_high_watermark = max(self._queue_high_watermark,
+                                                         self._queue.qsize())
+                        self._on_image_queued(next_index, group)
+                        if self._captured == self.image_count:
+                            self._capture_active = False
+                            self._state = STATE_DRAINING
+                            capture_done = True
 
             if overloaded:
                 self._end_capture(
@@ -465,6 +695,16 @@ class ContinuousSeries:
                 "writing_image_index": self._writing_index,
                 "error": dict(self._error) if self._error else None,
             }
+        # Buffer recycling. "free" buffers are ready for the callback; "fresh"
+        # counts callback allocations made because none was free (each costs
+        # about 46 ms of page faults on hardware), which means the writer is behind.
+        means, sums = self._mean_pool.stats(), self._sum_pool.stats()
+        snapshot.update({
+            "pool_free_means": means["free"],
+            "pool_free_sums": sums["free"],
+            "pool_reused_buffers": means["reused"] + sums["reused"],
+            "pool_fresh_allocations": means["allocated"] + sums["allocated"],
+        })
         snapshot.update(memory_snapshot())
         return snapshot
 
@@ -548,6 +788,7 @@ class ContinuousSeries:
                         self._discarded_images += 1
                     continue
                 self._write_item(item)
+                self._recycle(item)
         except Exception as e:  # defensive: never leave the series non-terminal
             self.logger(f"Series {self.series_id} writer error:\n{traceback.format_exc()}")
             with self._capture_lock:
@@ -564,7 +805,9 @@ class ContinuousSeries:
         tif_path = os.path.join(self.output_dir, f"{item.filename}.tif")
         json_path = os.path.join(self.output_dir, f"{item.filename}.json")
         try:
-            _write_tiff(tif_path, item.mean)
+            # For nframes > 1 this computes the mean (the divide) here, in the
+            # writer thread, rather than in the camera callback.
+            _write_tiff(tif_path, resolve_mean(item.mean))
             sidecar = dict(item.sidecar)
             # Measured after the TIFF is written, just before the sidecar itself
             # is written (a file cannot record its own write duration).
@@ -595,7 +838,28 @@ class ContinuousSeries:
             self._written += 1
             self._writing_index = None
 
+    def _recycle(self, item):
+        """Give an image's buffers back to the pools once nothing will read them.
+
+        Runs in the writer thread after the TIFF and sidecar were written (or
+        the write failed). The queued item is dropped right after, so the
+        array is not read again. Never raises: a buffer that cannot be
+        recycled is simply freed.
+        """
+        try:
+            mean = item.mean
+            if isinstance(mean, LazyMean):
+                mean.release_sum(self._sum_pool)
+            else:
+                self._mean_pool.release(mean)
+        except Exception:
+            pass
+
     def _finalize(self):
+        # The series is over: free the recycled buffers rather than keep up to
+        # a few hundred MiB alive while the manager holds the finished series.
+        self._mean_pool.clear()
+        self._sum_pool.clear()
         with self._lock:
             if self._pending_terminal is not None:
                 self._state = self._pending_terminal

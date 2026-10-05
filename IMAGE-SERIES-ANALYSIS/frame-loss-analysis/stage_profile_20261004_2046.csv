@@ -1,0 +1,17 @@
+session,mode,stage,frames,median_ms,p95_ms,max_ms,share_of_callback_median
+series_r1,idle,decode,30,0.055,0.068,0.086,0.655
+series_r1,idle,(unattributed),30,0.029,0.041,0.079,
+series_r1,series,decode,137,0.06,0.103,0.126,0.588
+series_r1,series,accumulate,15,56.182,95.363,134.345,0.316
+series_r1,series,complete,15,103.504,114.502,118.984,0.583
+series_r1,series,reset,15,16.232,16.682,16.794,0.091
+series_r1,series,enqueue,15,0.176,0.203,0.205,0.001
+series_r1,series,(unattributed),137,0.037,0.136,0.214,
+legacy_r1,idle,decode,30,0.054,0.076,0.077,0.635
+legacy_r1,idle,(unattributed),30,0.029,0.045,0.056,
+legacy_r1,legacy,decode,100,0.056,0.071,0.1,0.001
+legacy_r1,legacy,legacy_accumulate,100,88.027,94.155,185.197,0.999
+legacy_r1,legacy,(unattributed),100,0.043,0.062,0.081,
+legacy_r1,legacy_save,decode,1,0.06,0.06,0.06,0.0
+legacy_r1,legacy_save,legacy_save,1,8283.402,8283.402,8283.402,1.0
+legacy_r1,legacy_save,(unattributed),1,0.053,0.053,0.053,

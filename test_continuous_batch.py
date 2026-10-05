@@ -12,6 +12,7 @@ import time
 
 import numpy as np
 import pytest
+import tifffile
 from unittest.mock import MagicMock, patch
 
 import camera
@@ -571,3 +572,32 @@ class TestCameraClientBatch:
         with patch.object(client, "start_zmq") as start_zmq:
             client.series_batch_status("b1")
         start_zmq.assert_called_once()
+
+
+class TestBatchWithBufferRecycling:
+    @pytest.mark.parametrize("nframes", [1, 2])
+    def test_batch_writes_correct_means_end_to_end(self, tmp_path, nframes):
+        batch = cc.ContinuousSeriesBatch(
+            image_count=2, series_count=3, nframes=nframes, output_dir=str(tmp_path),
+            base_filename="TEST", inter_series_pause_us=FRAME_US, width=WIDTH, logger=quiet)
+        batch.start()
+        ts = 0
+        value = 0
+        expected = {}
+        for series_index in range(1, 4):
+            for image_index in range(1, 3):
+                values = []
+                for _ in range(nframes):
+                    value += 1
+                    values.append(value)
+                    batch.add_frame(make_frame(value), ts)
+                    ts += FRAME_US
+                expected[(series_index, image_index)] = sum(values) / nframes
+            ts += 3 * FRAME_US  # past the inter-series pause
+        assert batch.wait(5)
+        assert batch.status_snapshot()["state"] == cc.STATE_COMPLETE
+        for (s, i), mean in expected.items():
+            with tifffile.TiffFile(tmp_path / f"TEST_series{s}_image{i}.tif") as tif:
+                (page,) = [p.asarray() for p in tif.pages]
+            assert page.dtype == np.float32
+            np.testing.assert_array_equal(page, np.full((ROWS, WIDTH), mean, dtype=np.float32))

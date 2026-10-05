@@ -134,10 +134,11 @@ class OutputZMQ(Output):
         diagnostics = self.frame_diagnostics
         if diagnostics is not None and diagnostics.active:
             started = time.perf_counter()
+            timer = fd.StageTimer()  # per-frame stage profile, diagnostics only
             mode = self._frame_mode()
-            if self._outputframe(frame, timestamp):
+            if self._outputframe(frame, timestamp, timer):
                 mode = fd.MODE_LEGACY_SAVE
-            diagnostics.record_callback(timestamp, time.perf_counter() - started, mode)
+            diagnostics.record_callback(timestamp, time.perf_counter() - started, mode, timer)
         else:
             self._outputframe(frame, timestamp)
 
@@ -149,27 +150,37 @@ class OutputZMQ(Output):
             return fd.MODE_SERIES
         return fd.MODE_IDLE
 
-    def _outputframe(self, frame, timestamp):
-        """Process one frame. Returns True if the legacy TIFF was saved in this call."""
+    def _outputframe(self, frame, timestamp, timer=None):
+        """Process one frame. Returns True if the legacy TIFF was saved in this call.
+
+        ``timer`` is a frame_diagnostics.StageTimer while a diagnostics session
+        is active, else None (then the stage blocks below cost one comparison).
+        """
         self.cnt += 1
-        self.im = np.frombuffer(frame, dtype=np.uint16)
-        self.im = np.reshape(self.im, (self.size[0], -1))
+        with fd.stage(timer, fd.STAGE_DECODE):
+            self.im = np.frombuffer(frame, dtype=np.uint16)
+            self.im = np.reshape(self.im, (self.size[0], -1))
 
         # Continuous series capture. The series consumes the frame before this
         # callback returns and keeps no reference to the camera buffer.
         if self.series_manager is not None:
-            self.series_manager.on_frame(self.im, timestamp)
+            if timer is None:
+                self.series_manager.on_frame(self.im, timestamp)
+            else:
+                self.series_manager.on_frame(self.im, timestamp, timer=timer)
 
         # Update accumulators if we are accumulating.
         if self.accT is not None:
             if (self.accN < self.accT):
-                if (self.X is None):
-                    self.X = np.zeros(self.im.shape, dtype=np.uint32)
-                    self.XX = np.zeros_like(self.X)
-                iac.update_x_xx(self.X, self.XX, self.im)
+                with fd.stage(timer, fd.STAGE_LEGACY_ACCUMULATE):
+                    if (self.X is None):
+                        self.X = np.zeros(self.im.shape, dtype=np.uint32)
+                        self.XX = np.zeros_like(self.X)
+                    iac.update_x_xx(self.X, self.XX, self.im)
                 self.accN += 1
             else:
-                self.save_accumulated()
+                with fd.stage(timer, fd.STAGE_LEGACY_SAVE):
+                    self.save_accumulated()
                 self.accN = None
                 self.accT = None
                 # self.current_tif_path = None # clear filename after saving
@@ -420,19 +431,23 @@ class SeriesManager:
         series.cancel()
         return {"ok": True, "series_id": series.series_id, "state": series.state}
 
-    def on_frame(self, frame, timestamp_us):
+    def on_frame(self, frame, timestamp_us, timer=None):
         """Forward one callback frame to the current series, if any.
 
         Called from the camera callback. The series consumes the frame before
         returning. Exceptions are caught so the shared camera callback, which the
-        legacy path also uses, keeps running.
+        legacy path also uses, keeps running. ``timer`` is an optional
+        frame_diagnostics.StageTimer (diagnostics sessions only).
         """
         with self._lock:
             series = self._series
         if series is None:
             return
         try:
-            series.add_frame(frame, timestamp_us)
+            if timer is None:
+                series.add_frame(frame, timestamp_us)
+            else:
+                series.add_frame(frame, timestamp_us, timer=timer)
         except Exception as e:
             self.logger(f"Continuous series frame error:\n{traceback.format_exc()}")
             with self._lock:
@@ -533,6 +548,34 @@ def handle_diagnostics_command(msg, diagnostics, picam2):
 
 running = True
 
+# Camera buffers. Each holds one full-resolution raw frame (about 24.7 MB) plus
+# the 1280x720 main stream (about 3.7 MB), allocated from CMA (512 MB on this
+# Pi). Picamera2's video default is 6; the camera drops frames once all are
+# held by a slow callback, so more buffers absorb longer stalls. This does not
+# help if the callback is slower than the frame period on every frame.
+CAMERA_BUFFER_COUNT = 10
+PICAMERA2_DEFAULT_BUFFER_COUNT = 6
+
+
+def configure_camera(picam2, buffer_count=CAMERA_BUFFER_COUNT):
+    """Configure the full-resolution raw video stream. Return the buffer count used.
+
+    Falls back to Picamera2's default buffer count if the larger allocation fails.
+    """
+    raw = {'format': 'SRGGB12', 'size': (4056, 3040)}
+    try:
+        picam2.configure(picam2.create_video_configuration(raw=raw, buffer_count=buffer_count))
+        return buffer_count
+    except Exception as e:
+        if buffer_count == PICAMERA2_DEFAULT_BUFFER_COUNT:
+            raise
+        print(f"Could not configure {buffer_count} camera buffers ({type(e).__name__}: {e}); "
+              f"falling back to {PICAMERA2_DEFAULT_BUFFER_COUNT}")
+        picam2.configure(picam2.create_video_configuration(
+            raw=raw, buffer_count=PICAMERA2_DEFAULT_BUFFER_COUNT))
+        return PICAMERA2_DEFAULT_BUFFER_COUNT
+
+
 def camera_zmq(verbose = True):
     global running
 
@@ -545,8 +588,8 @@ def camera_zmq(verbose = True):
     picam2 = Picamera2()
 
     size = (4056, 3040) # HQ camera size.
-    config = picam2.create_video_configuration(raw = {'format' : 'SRGGB12', 'size' : (4056, 3040)})
-    picam2.configure(config)
+    buffer_count = configure_camera(picam2)
+    print(f"Camera configured with {buffer_count} buffers")
     picam2.set_controls({"ExposureTime" : 11000, "AnalogueGain" : 1.0})
     picam2.encode_stream_name = "raw"
 

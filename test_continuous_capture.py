@@ -492,9 +492,9 @@ class TestSeriesStatusAndConfig:
             blocker.release.set()
             assert series.wait(5)
 
-    def test_default_queue_capacity_is_3(self, tmp_path):
-        assert cc.DEFAULT_QUEUE_CAPACITY == 3
-        assert make_series(tmp_path).status_snapshot()["queue_capacity"] == 3
+    def test_default_queue_capacity_is_15(self, tmp_path):
+        assert cc.DEFAULT_QUEUE_CAPACITY == 15
+        assert make_series(tmp_path).status_snapshot()["queue_capacity"] == 15
 
     def test_queue_capacity_is_configurable(self, tmp_path):
         assert make_series(tmp_path, queue_capacity=8).status_snapshot()["queue_capacity"] == 8
@@ -514,3 +514,230 @@ class TestSeriesStatusAndConfig:
         with pytest.raises(ValueError):
             cc.ContinuousSeries(1, 1, str(tmp_path / "missing"), "TEST_series")
 
+
+
+# ----------------------------------------------------------------------------
+# Callback cost reduction: LazyMean, BufferPool, nframes=1 fast path, and
+# buffer recycling between the callback and the writer
+# ----------------------------------------------------------------------------
+
+def reference_mean(frames, nframes):
+    """The previous arithmetic: uint32 sum, then np.divide into a new float32 array."""
+    total = np.zeros((ROWS, WIDTH), dtype=np.uint32)
+    for frame in frames:
+        np.add(total, frame[:, :WIDTH], out=total)
+    mean = np.empty((ROWS, WIDTH), dtype=np.float32)
+    np.divide(total, nframes, out=mean)
+    return mean
+
+
+class TestLazyMean:
+    def test_computes_lazily_once_and_is_read_only(self):
+        total = np.full((ROWS, WIDTH), 9, dtype=np.uint32)
+        lazy = cc.LazyMean(total, 3)
+        assert not lazy.computed
+        assert lazy.flags.writeable is False
+        with patch.object(cc.np, "divide", wraps=np.divide) as divide:
+            first = lazy.mean
+            second = lazy.mean
+        assert divide.call_count == 1
+        assert first is second and lazy.computed
+        assert first.dtype == np.float32 and not first.flags.writeable
+        np.testing.assert_array_equal(first, np.full((ROWS, WIDTH), 3, dtype=np.float32))
+
+    def test_matches_the_previous_divide_exactly(self):
+        rng = np.random.default_rng(3)
+        frames = [rng.integers(0, 4096, size=(ROWS, PADDED_WIDTH), dtype=np.uint16) for _ in range(7)]
+        total = np.zeros((ROWS, WIDTH), dtype=np.uint32)
+        for frame in frames:
+            total += frame[:, :WIDTH]
+        lazy = cc.LazyMean(total, 7)
+        assert lazy.mean.tobytes() == reference_mean(frames, 7).tobytes()
+
+    def test_behaves_like_the_array_for_inspection(self):
+        lazy = cc.LazyMean(np.full((ROWS, WIDTH), 4, dtype=np.uint32), 2)
+        assert lazy.shape == (ROWS, WIDTH) and lazy.dtype == np.float32
+        assert float(lazy[0, 0]) == 2.0
+        np.testing.assert_array_equal(np.asarray(lazy), lazy.mean)
+        assert np.asarray(lazy, dtype=np.float64).dtype == np.float64
+
+    def test_sum_is_only_released_after_the_mean_exists(self):
+        pool = cc.BufferPool(zero=True)
+        total = np.full((ROWS, WIDTH), 6, dtype=np.uint32)
+        lazy = cc.LazyMean(total, 2)
+        assert lazy.release_sum(pool) is False  # mean not computed yet
+        assert pool.stats()["free"] == 0
+        mean = lazy.mean
+        assert lazy.release_sum(pool) is True
+        assert lazy.release_sum(pool) is False  # only once
+        assert pool.stats()["free"] == 1
+        np.testing.assert_array_equal(mean, np.full((ROWS, WIDTH), 3, dtype=np.float32))
+        assert not np.any(total)  # zeroed for its next group
+
+
+class TestBufferPool:
+    def test_reuses_released_arrays(self):
+        pool = cc.BufferPool(zero=False)
+        first = pool.acquire((ROWS, WIDTH), np.float32)
+        first.flags.writeable = False  # as a completed mean would be
+        pool.release(first)
+        again = pool.acquire((ROWS, WIDTH), np.float32)
+        assert again is first and again.flags.writeable
+        assert pool.stats() == {"free": 0, "reused": 1, "allocated": 1}
+
+    def test_zeroing_pool_returns_zeroed_arrays(self):
+        pool = cc.BufferPool(zero=True)
+        array = pool.acquire((ROWS, WIDTH), np.uint32)
+        assert not np.any(array)
+        array[:] = 77
+        pool.release(array)
+        assert not np.any(pool.acquire((ROWS, WIDTH), np.uint32))
+
+    def test_empty_pool_allocates_fresh_without_blocking(self):
+        pool = cc.BufferPool(zero=False, max_free=1)
+        held = [pool.acquire((ROWS, WIDTH), np.float32) for _ in range(3)]
+        assert len({id(a) for a in held}) == 3
+        for i, array in enumerate(held):
+            array[:] = i
+        for i, array in enumerate(held):
+            assert float(array[0, 0]) == i  # no buffer was shared
+        assert pool.stats()["allocated"] == 3
+
+    def test_keeps_at_most_max_free_and_separates_shapes_and_dtypes(self):
+        pool = cc.BufferPool(zero=True, max_free=2)
+        for _ in range(4):
+            pool.release(np.ones((ROWS, WIDTH), dtype=np.uint32))
+        pool.release(np.ones((ROWS, WIDTH), dtype=np.float32))
+        assert pool.stats()["free"] == 3
+        assert pool.acquire((ROWS, WIDTH), np.float32).dtype == np.float32
+        assert pool.acquire((ROWS + 1, WIDTH), np.uint32).shape == (ROWS + 1, WIDTH)
+
+    def test_views_are_never_pooled_and_clear_frees_everything(self):
+        pool = cc.BufferPool(zero=False)
+        base = np.zeros((ROWS, PADDED_WIDTH), dtype=np.float32)
+        pool.release(base[:, :WIDTH])
+        assert pool.stats()["free"] == 0
+        pool.release(base)
+        pool.clear()
+        assert pool.stats()["free"] == 0
+
+
+class TestAccumulatorFastPaths:
+    def test_nframes_1_mean_is_the_pooled_float32_array(self):
+        pool = cc.BufferPool(zero=False)
+        recycled = np.full((ROWS, WIDTH), -5, dtype=np.float32)  # stale data
+        pool.release(recycled)
+        acc = cc.FrameGroupAccumulator(1, width=WIDTH, mean_pool=pool)
+        frame = np.random.default_rng(1).integers(0, 65536, size=(ROWS, PADDED_WIDTH), dtype=np.uint16)
+        group = acc.add_frame(frame, timestamp_us=55)
+        assert group.mean is recycled  # no fresh allocation
+        assert isinstance(group.mean, np.ndarray) and not group.mean.flags.writeable
+        assert group.mean.tobytes() == reference_mean([frame], 1).tobytes()
+        assert group.sensor_timestamps_us == (55,)
+
+    def test_nframes_1_uses_no_running_sum(self):
+        acc = cc.FrameGroupAccumulator(1, width=WIDTH)
+        for value in (1, 2, 3):
+            acc.add_frame(make_frame(value))
+        assert acc._sum is None and acc.sum_pool.stats()["allocated"] == 0
+        assert acc.frames_in_group == 0
+
+    def test_nframes_gt_1_hands_over_a_lazy_mean_of_the_sum(self):
+        pool = cc.BufferPool(zero=True)
+        acc = cc.FrameGroupAccumulator(2, width=WIDTH, sum_pool=pool)
+        acc.add_frame(make_frame(4))
+        group = acc.add_frame(make_frame(8))
+        assert isinstance(group.mean, cc.LazyMean) and not group.mean.computed
+        assert acc._sum is None  # the next group takes a new sum from the pool
+        np.testing.assert_array_equal(cc.resolve_mean(group.mean),
+                                      np.full((ROWS, WIDTH), 6, dtype=np.float32))
+
+    def test_next_group_never_shares_the_handed_over_sum(self):
+        pool = cc.BufferPool(zero=True)
+        acc = cc.FrameGroupAccumulator(2, width=WIDTH, sum_pool=pool)
+        first = [acc.add_frame(make_frame(v)) for v in (10, 20)][-1]
+        second = [acc.add_frame(make_frame(v)) for v in (1, 3)][-1]
+        assert float(cc.resolve_mean(first.mean)[0, 0]) == 15.0  # computed after group 2
+        assert float(cc.resolve_mean(second.mean)[0, 0]) == 2.0
+
+    def test_reset_discards_a_partial_group_without_touching_the_pool(self):
+        pool = cc.BufferPool(zero=True)
+        acc = cc.FrameGroupAccumulator(3, width=WIDTH, sum_pool=pool)
+        acc.add_frame(make_frame(100))
+        acc.reset()
+        assert acc.frames_in_group == 0 and pool.stats()["free"] == 0
+        group = [acc.add_frame(make_frame(v)) for v in (1, 2, 3)][-1]
+        assert float(cc.resolve_mean(group.mean)[0, 0]) == 2.0  # no leftover 100
+
+
+class TestSeriesBufferRecycling:
+    def test_nframes_1_tiffs_match_and_buffers_are_recycled(self, tmp_path):
+        rng = np.random.default_rng(11)
+        frames = [rng.integers(0, 4096, size=(ROWS, PADDED_WIDTH), dtype=np.uint16) for _ in range(6)]
+        series = make_series(tmp_path, image_count=6, nframes=1)
+        series.start()
+        for frame in frames:
+            assert series.add_frame(frame)
+            assert wait_until(lambda: series.status_snapshot()["queue_depth"] == 0)
+        assert series.wait(5)
+        final = series.status_snapshot()
+        assert final["state"] == cc.STATE_COMPLETE
+        for i, frame in enumerate(frames, start=1):
+            (page,) = read_tiff_pages(tmp_path / f"TEST_series_image{i}.tif")
+            assert page.dtype == np.float32
+            assert page.tobytes() == reference_mean([frame], 1).tobytes()
+        assert final["pool_reused_buffers"] >= 1  # recycled after writing
+        assert final["pool_free_means"] == 0  # pools are emptied when the series ends
+
+    def test_nframes_gt_1_tiffs_match_and_sums_are_recycled(self, tmp_path):
+        rng = np.random.default_rng(12)
+        frames = [rng.integers(0, 4096, size=(ROWS, PADDED_WIDTH), dtype=np.uint16) for _ in range(12)]
+        series = make_series(tmp_path, image_count=4, nframes=3)
+        series.start()
+        for i, frame in enumerate(frames):
+            assert series.add_frame(frame)
+            if i % 3 == 2:
+                assert wait_until(lambda: series.status_snapshot()["queue_depth"] == 0
+                                  and series.status_snapshot()["writing_image_index"] is None)
+        assert series.wait(5)
+        final = series.status_snapshot()
+        assert final["state"] == cc.STATE_COMPLETE
+        for i in range(4):
+            (page,) = read_tiff_pages(tmp_path / f"TEST_series_image{i + 1}.tif")
+            assert page.tobytes() == reference_mean(frames[3 * i:3 * i + 3], 3).tobytes()
+        assert final["pool_reused_buffers"] >= 1
+
+    @pytest.mark.parametrize("nframes", [1, 4])
+    def test_stress_pool_smaller_than_queue_every_tiff_is_correct(self, tmp_path, nframes):
+        rng = np.random.default_rng(nframes)
+        image_count = 25
+        frames = [rng.integers(0, 4096, size=(ROWS, PADDED_WIDTH), dtype=np.uint16)
+                  for _ in range(image_count * nframes)]
+        real_write = cc._write_tiff
+
+        def jittery_write(path, image):
+            time.sleep(0.002)  # let the callback run ahead of the writer
+            real_write(path, image)
+
+        with patch.object(cc, "_write_tiff", jittery_write):
+            series = make_series(tmp_path, image_count=image_count, nframes=nframes,
+                                 queue_capacity=image_count)
+            series._mean_pool.max_free = series._sum_pool.max_free = 2
+            series.start()
+            for frame in frames:
+                assert series.add_frame(frame)
+            assert series.wait(10)
+        snap = series.status_snapshot()
+        assert snap["state"] == cc.STATE_COMPLETE and snap["written_images"] == image_count
+        for i in range(image_count):
+            (page,) = read_tiff_pages(tmp_path / f"TEST_series_image{i + 1}.tif")
+            group = frames[i * nframes:(i + 1) * nframes]
+            assert page.tobytes() == reference_mean(group, nframes).tobytes(), f"image {i + 1}"
+
+    def test_failed_write_still_recycles_without_corrupting_later_state(self, tmp_path):
+        with patch.object(cc, "_write_tiff", side_effect=OSError("disk full")):
+            series = make_series(tmp_path, image_count=3, nframes=1)
+            series.start()
+            series.add_frame(make_frame(1))
+            assert series.wait(5)
+        assert series.state == cc.STATE_FAILED
