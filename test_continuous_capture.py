@@ -475,6 +475,8 @@ class TestSeriesStatusAndConfig:
             "ok", "series_id", "state", "is_terminal", "requested_images",
             "captured_images", "written_images", "queue_depth", "queue_high_watermark",
             "queue_capacity", "error", "process_rss_bytes", "system_available_bytes",
+            "pool_free_means", "pool_free_sums", "pool_reused_buffers",
+            "pool_fresh_allocations", "pool_target_means", "pool_target_sums", "pool_filling",
         ):
             assert key in snapshot
         assert snapshot["state"] == cc.STATE_ACCEPTED
@@ -577,13 +579,14 @@ class TestLazyMean:
 
 class TestBufferPool:
     def test_reuses_released_arrays(self):
-        pool = cc.BufferPool(zero=False)
+        pool = cc.BufferPool(zero=False, target=0)
         first = pool.acquire((ROWS, WIDTH), np.float32)
         first.flags.writeable = False  # as a completed mean would be
         pool.release(first)
         again = pool.acquire((ROWS, WIDTH), np.float32)
         assert again is first and again.flags.writeable
-        assert pool.stats() == {"free": 0, "reused": 1, "allocated": 1}
+        assert pool.stats() == {"free": 0, "reused": 1, "allocated": 1, "prefilled": 0,
+                                "target": 0, "filling": False}
 
     def test_zeroing_pool_returns_zeroed_arrays(self):
         pool = cc.BufferPool(zero=True)
@@ -594,7 +597,7 @@ class TestBufferPool:
         assert not np.any(pool.acquire((ROWS, WIDTH), np.uint32))
 
     def test_empty_pool_allocates_fresh_without_blocking(self):
-        pool = cc.BufferPool(zero=False, max_free=1)
+        pool = cc.BufferPool(zero=False, max_free=1, target=0)
         held = [pool.acquire((ROWS, WIDTH), np.float32) for _ in range(3)]
         assert len({id(a) for a in held}) == 3
         for i, array in enumerate(held):
@@ -604,7 +607,7 @@ class TestBufferPool:
         assert pool.stats()["allocated"] == 3
 
     def test_keeps_at_most_max_free_and_separates_shapes_and_dtypes(self):
-        pool = cc.BufferPool(zero=True, max_free=2)
+        pool = cc.BufferPool(zero=True, max_free=2, target=0)
         for _ in range(4):
             pool.release(np.ones((ROWS, WIDTH), dtype=np.uint32))
         pool.release(np.ones((ROWS, WIDTH), dtype=np.float32))
@@ -661,7 +664,7 @@ class TestAccumulatorFastPaths:
         assert float(cc.resolve_mean(second.mean)[0, 0]) == 2.0
 
     def test_reset_discards_a_partial_group_without_touching_the_pool(self):
-        pool = cc.BufferPool(zero=True)
+        pool = cc.BufferPool(zero=True, target=0)
         acc = cc.FrameGroupAccumulator(3, width=WIDTH, sum_pool=pool)
         acc.add_frame(make_frame(100))
         acc.reset()
@@ -741,3 +744,350 @@ class TestSeriesBufferRecycling:
             series.add_frame(make_frame(1))
             assert series.wait(5)
         assert series.state == cc.STATE_FAILED
+
+
+# ----------------------------------------------------------------------------
+# Buffer pre-allocation: background pool fill and the start-of-series memory check
+# ----------------------------------------------------------------------------
+
+def _idle_worker(pool_ref, stop, wake):
+    """Replaces cc._pool_worker so a test drives top_up() by hand."""
+
+
+class TestBufferPoolPrefill:
+    def test_top_up_needs_a_known_shape(self):
+        pool = cc.BufferPool(zero=True, target=2)
+        assert pool.top_up() is False  # no acquire yet, so no shape
+        assert pool.stats()["free"] == 0 and pool.stats()["prefilled"] == 0
+
+    def test_top_up_adds_one_buffer_at_a_time_up_to_target(self):
+        with patch.object(cc, "_pool_worker", _idle_worker):
+            pool = cc.BufferPool(zero=True, target=3)
+            first = pool.acquire((ROWS, WIDTH), np.uint32)
+            assert pool.stats()["free"] == 0
+            for expected_free in (1, 2, 3):
+                assert pool.top_up() is True
+                assert pool.stats()["free"] == expected_free
+            assert pool.top_up() is False  # at target: stops
+            assert pool.stats()["free"] == 3 and pool.stats()["prefilled"] == 3
+            ready = [pool.acquire((ROWS, WIDTH), np.uint32) for _ in range(3)]
+        assert all(not np.any(a) and a.dtype == np.uint32 and a.shape == (ROWS, WIDTH)
+                   for a in ready)
+        assert len({id(a) for a in ready + [first]}) == 4
+        assert pool.stats()["allocated"] == 1 and pool.stats()["reused"] == 3
+
+    def test_allocate_ready_returns_zeroed_writeable_owned_arrays(self):
+        array = cc._allocate_ready((ROWS, WIDTH), np.float32)
+        assert array.flags.owndata and array.flags.writeable
+        assert array.dtype == np.float32 and not np.any(array)
+
+    def test_worker_fills_to_target_and_stops_there(self):
+        pool = cc.BufferPool(zero=False, target=4)
+        pool.acquire((ROWS, WIDTH), np.float32)
+        assert wait_until(lambda: pool.stats()["free"] == 4)
+        time.sleep(0.05)
+        stats = pool.stats()
+        assert stats["free"] == 4 and stats["prefilled"] == 4 and stats["filling"] is True
+        # Taking a buffer wakes the worker, which replaces it.
+        pool.acquire((ROWS, WIDTH), np.float32)
+        assert wait_until(lambda: pool.stats()["prefilled"] == 5 and pool.stats()["free"] == 4)
+        pool.close()
+
+    def test_close_stops_the_worker_and_is_idempotent(self):
+        pool = cc.BufferPool(zero=True, target=2)
+        pool.acquire((ROWS, WIDTH), np.uint32)
+        assert wait_until(lambda: pool.stats()["free"] == 2)
+        worker = pool._worker
+        assert worker.daemon
+        pool.close()
+        pool.close()
+        worker.join(2)
+        assert not worker.is_alive()
+        assert pool.stats()["filling"] is False
+        assert pool.top_up() is False
+        # acquire/release still work after close; they never restart the worker.
+        array = pool.acquire((ROWS, WIDTH), np.uint32)
+        pool.release(array)
+        assert pool._worker is worker and not worker.is_alive()
+        pool.clear()
+        assert pool.stats()["free"] == 0
+
+    def test_target_zero_never_starts_a_worker(self):
+        pool = cc.BufferPool(zero=False, target=0)
+        pool.acquire((ROWS, WIDTH), np.float32)
+        assert pool._worker is None and pool.top_up() is False
+        assert pool.stats()["filling"] is False and pool.stats()["target"] == 0
+
+    def test_release_below_target_still_works_normally(self):
+        with patch.object(cc, "_pool_worker", _idle_worker):
+            pool = cc.BufferPool(zero=True, max_free=4, target=4)
+            array = pool.acquire((ROWS, WIDTH), np.uint32)
+            array[:] = 9
+            array.flags.writeable = False
+            pool.release(array)
+            assert pool.stats()["free"] == 1
+            again = pool.acquire((ROWS, WIDTH), np.uint32)
+        assert again is array and again.flags.writeable and not np.any(again)
+
+    def test_worker_never_holds_the_lock_while_allocating(self):
+        allocating = threading.Event()
+        finish = threading.Event()
+        lock_held = []
+        real_allocate = cc._allocate_ready
+        pool = cc.BufferPool(zero=False, target=1)
+
+        def slow_allocate(shape, dtype, wait=None):
+            lock_held.append(pool._lock.locked())
+            allocating.set()
+            finish.wait(5)
+            return real_allocate(shape, dtype, wait)
+
+        try:
+            with patch.object(cc, "_allocate_ready", slow_allocate):
+                pool.acquire((ROWS, WIDTH), np.float32)
+                assert allocating.wait(5)
+                # While the worker is mid-allocation, nothing waits for it.
+                start = time.monotonic()
+                held = pool.acquire((ROWS, WIDTH), np.float32)  # fallback, no wait
+                pool.release(held)
+                pool.stats()
+                assert time.monotonic() - start < 1.0
+                assert lock_held == [False]
+        finally:
+            finish.set()
+            pool.close()
+        assert pool.stats()["allocated"] == 2
+
+    def test_worker_pauses_while_the_callback_is_active_unless_empty(self):
+        pool = cc.BufferPool(zero=False, target=3)
+        pool.set_active(True)
+        pool.acquire((ROWS, WIDTH), np.float32)
+        # Empty pool: one buffer is filled at once, even during the "callback".
+        assert wait_until(lambda: pool.stats()["free"] == 1)
+        time.sleep(0.1)
+        assert pool.stats()["free"] == 1  # not empty any more: paused
+        pool.set_active(False)
+        assert wait_until(lambda: pool.stats()["free"] == 3)
+        pool.close()
+
+    def test_close_abandons_a_fill_paused_by_the_callback(self):
+        pool = cc.BufferPool(zero=False, target=3)
+        pool.set_active(True)  # e.g. a callback that never returned
+        pool.acquire((ROWS, WIDTH), np.float32)
+        worker = pool._worker
+        assert wait_until(lambda: pool.stats()["free"] == 1)
+        time.sleep(0.05)
+        pool.close()
+        worker.join(2)
+        assert not worker.is_alive() and pool.stats()["free"] == 1
+
+    def test_allocate_ready_touches_every_page_and_stays_zero(self):
+        rows, cols = 64, cc._PAGE_BYTES // 4 + 3  # pages do not align with rows
+        calls = []
+        array = cc._allocate_ready((rows, cols), np.uint32, lambda: calls.append(1) or True)
+        assert array.shape == (rows, cols) and not np.any(array)
+        assert len(calls) >= 1
+        assert cc._allocate_ready((rows, cols), np.uint32, lambda: False) is None
+
+
+
+class TestSeriesPrefill:
+    # Pre-fill is off by default (DEFAULT_POOL_TARGET = 0); these tests turn it
+    # on so the fill path stays covered for when it is re-enabled.
+    @pytest.fixture(autouse=True)
+    def _prefill_on(self):
+        with patch.object(cc, "DEFAULT_POOL_TARGET", 2):
+            yield
+
+    @pytest.mark.parametrize("nframes", [1, 3])
+    def test_backlogged_writer_needs_only_the_first_fresh_allocation(self, tmp_path, nframes):
+        """Writer held busy (full backlog): every acquire after the first is pre-filled."""
+        rng = np.random.default_rng(20 + nframes)
+        image_count = 10
+        frames = [rng.integers(0, 4096, size=(ROWS, PADDED_WIDTH), dtype=np.uint16)
+                  for _ in range(image_count * nframes)]
+        pool_key = "pool_free_means" if nframes == 1 else "pool_free_sums"
+        blocker = BlockingTiffWriter()
+        with patch.object(cc, "_write_tiff", blocker):
+            series = make_series(tmp_path, image_count=image_count, nframes=nframes)
+            series.start()
+            try:
+                for i, frame in enumerate(frames):
+                    if i > 0:
+                        # Stands in for the 100 ms frame period: the fill worker
+                        # (instant at this size) tops the pool back up.
+                        assert wait_until(lambda: series.status_snapshot()[pool_key]
+                                          == cc.DEFAULT_POOL_TARGET)
+                    assert series.add_frame(frame)
+                assert series.status_snapshot()["pool_fresh_allocations"] == 1
+            finally:
+                blocker.release.set()
+            assert series.wait(10)
+        snap = series.status_snapshot()
+        assert snap["state"] == cc.STATE_COMPLETE and snap["written_images"] == image_count
+        assert snap["pool_fresh_allocations"] == 1
+        for i in range(image_count):
+            (page,) = read_tiff_pages(tmp_path / f"TEST_series_image{i + 1}.tif")
+            group = frames[i * nframes:(i + 1) * nframes]
+            assert page.tobytes() == reference_mean(group, nframes).tobytes(), f"image {i + 1}"
+
+    @pytest.mark.parametrize("mode", ["slow", "disabled"])
+    @pytest.mark.parametrize("nframes", [1, 2])
+    def test_slow_or_disabled_fill_falls_back_without_deadlock(self, tmp_path, mode, nframes):
+        rng = np.random.default_rng(30 + nframes)
+        image_count = 10
+        frames = [rng.integers(0, 4096, size=(ROWS, PADDED_WIDTH), dtype=np.uint16)
+                  for _ in range(image_count * nframes)]
+        stuck = threading.Event()
+        real_allocate = cc._allocate_ready
+
+        def never_finishes(shape, dtype, wait=None):
+            stuck.wait(10)
+            return real_allocate(shape, dtype, wait)
+
+        try:
+            with patch.object(cc, "_allocate_ready", never_finishes):
+                series = make_series(tmp_path, image_count=image_count, nframes=nframes)
+                if mode == "disabled":
+                    series._mean_pool.target = series._sum_pool.target = 0
+                series.start()
+                start = time.monotonic()
+                for frame in frames:
+                    assert series.add_frame(frame)
+                assert time.monotonic() - start < 5.0  # the callback never waited
+                assert series.wait(10)
+        finally:
+            stuck.set()
+        snap = series.status_snapshot()
+        assert snap["state"] == cc.STATE_COMPLETE and snap["written_images"] == image_count
+        assert snap["pool_fresh_allocations"] >= 1
+        assert snap["pool_filling"] is False  # workers are stopped when the series ends
+        for i in range(image_count):
+            (page,) = read_tiff_pages(tmp_path / f"TEST_series_image{i + 1}.tif")
+            group = frames[i * nframes:(i + 1) * nframes]
+            assert page.tobytes() == reference_mean(group, nframes).tobytes(), f"image {i + 1}"
+
+    def test_status_snapshot_reports_the_pool_fields(self, tmp_path):
+        blocker = BlockingTiffWriter()
+        with patch.object(cc, "_write_tiff", blocker):
+            series = make_series(tmp_path, image_count=2, nframes=1)
+            before = series.status_snapshot()
+            assert before["pool_target_means"] == cc.DEFAULT_POOL_TARGET == 2
+            assert before["pool_target_sums"] == cc.DEFAULT_POOL_TARGET
+            assert before["pool_filling"] is False  # shape not known yet
+            series.start()
+            assert series.add_frame(make_frame(1))
+            assert wait_until(lambda: series.status_snapshot()["pool_free_means"]
+                              == cc.DEFAULT_POOL_TARGET)
+            during = series.status_snapshot()
+            json.dumps(during)
+            assert during["pool_filling"] is True
+            blocker.release.set()
+            assert series.add_frame(make_frame(2))
+            assert series.wait(5)
+        after = series.status_snapshot()
+        assert after["state"] == cc.STATE_COMPLETE
+        assert after["pool_filling"] is False and after["pool_free_means"] == 0
+        series._mean_pool._worker.join(2)
+        assert not series._mean_pool._worker.is_alive()
+
+
+
+class TestSeriesPrefillDisabledByDefault:
+    @pytest.mark.parametrize("nframes", [1, 2])
+    def test_default_target_starts_no_worker_and_output_is_unchanged(self, tmp_path, nframes):
+        assert cc.DEFAULT_POOL_TARGET == 0
+        rng = np.random.default_rng(40 + nframes)
+        frames = [rng.integers(0, 4096, size=(ROWS, PADDED_WIDTH), dtype=np.uint16)
+                  for _ in range(3 * nframes)]
+        series = make_series(tmp_path, image_count=3, nframes=nframes)
+        series.start()
+        for frame in frames:
+            assert series.add_frame(frame)
+        assert series.wait(5)
+        snap = series.status_snapshot()
+        assert snap["state"] == cc.STATE_COMPLETE
+        assert snap["pool_target_means"] == snap["pool_target_sums"] == 0
+        assert snap["pool_filling"] is False
+        assert series._mean_pool._worker is None and series._sum_pool._worker is None
+        for i in range(3):
+            (page,) = read_tiff_pages(tmp_path / f"TEST_series_image{i + 1}.tif")
+            group = frames[i * nframes:(i + 1) * nframes]
+            assert page.tobytes() == reference_mean(group, nframes).tobytes()
+
+
+class TestSeriesMemoryCheck:
+    def test_low_memory_latches_insufficient_memory_and_fails_cleanly(self, tmp_path):
+        calls = []
+
+        def low_memory():
+            calls.append(1)
+            return 100 * 1024 * 1024  # less than the 150 MiB headroom alone
+
+        with patch.object(cc, "_available_memory_bytes", low_memory):
+            series = make_series(tmp_path, image_count=3, nframes=1)
+            series.start()
+            assert series.add_frame(make_frame(1)) is False
+            assert series.add_frame(make_frame(2)) is False  # capture has stopped
+            assert series.wait(5)
+        snap = series.status_snapshot()
+        assert snap["state"] == cc.STATE_FAILED
+        assert snap["error"]["code"] == cc.ERROR_INSUFFICIENT_MEMORY == "INSUFFICIENT_MEMORY"
+        assert snap["error"]["image_index"] == 1
+        assert snap["captured_images"] == 0 and snap["written_images"] == 0
+        assert snap["pool_fresh_allocations"] == 0  # failed before any buffer was taken
+        assert len(calls) == 1
+        assert list(tmp_path.iterdir()) == []
+
+    @pytest.mark.parametrize("margin, ok", [(-1, False), (0, True)])
+    def test_estimate_is_target_rows_active_width_4_bytes_plus_headroom(self, tmp_path,
+                                                                       margin, ok):
+        required = cc.DEFAULT_POOL_TARGET * ROWS * WIDTH * 4 + cc.POOL_MEMORY_HEADROOM_BYTES
+        with patch.object(cc, "_available_memory_bytes", lambda: required + margin):
+            series = make_series(tmp_path, image_count=1, nframes=1)
+            series.start()
+            assert series.add_frame(make_frame(1)) is ok  # padded frame, active width used
+            assert series.wait(5)
+        assert series.state == (cc.STATE_COMPLETE if ok else cc.STATE_FAILED)
+
+    @pytest.mark.parametrize("available", [64 * 1024 ** 3, None])
+    def test_plenty_or_unknown_memory_does_not_fire_and_checks_once(self, tmp_path, available):
+        calls = []
+
+        def reader():
+            calls.append(1)
+            return available
+
+        with patch.object(cc, "_available_memory_bytes", reader):
+            series = make_series(tmp_path, image_count=3, nframes=2)
+            series.start()
+            for value in range(6):
+                assert series.add_frame(make_frame(value))
+            assert series.wait(5)
+        snap = series.status_snapshot()
+        assert snap["state"] == cc.STATE_COMPLETE and snap["error"] is None
+        assert len(calls) == 1  # only when the shape is first learned
+
+    def test_batch_checks_once_for_the_whole_batch(self, tmp_path):
+        calls = []
+
+        def reader():
+            calls.append(1)
+            return 64 * 1024 ** 3
+
+        with patch.object(cc, "_available_memory_bytes", reader):
+            batch = cc.ContinuousSeriesBatch(
+                image_count=2, series_count=2, nframes=1, output_dir=str(tmp_path),
+                base_filename="TEST_batch", width=WIDTH, logger=lambda msg: None)
+            batch.start()
+            for i in range(4):
+                assert batch.add_frame(make_frame(i), timestamp_us=(i + 1) * 100_000)
+            assert batch.wait(5)
+        assert batch.state == cc.STATE_COMPLETE
+        assert len(calls) == 1
+
+    def test_default_reader_uses_meminfo(self):
+        with patch.object(cc, "memory_snapshot",
+                          return_value={"process_rss_bytes": 1, "system_available_bytes": 42}):
+            assert cc._available_memory_bytes() == 42
+

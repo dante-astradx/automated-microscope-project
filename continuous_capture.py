@@ -23,6 +23,7 @@ import threading
 import time
 import traceback
 import uuid
+import weakref
 from dataclasses import dataclass
 from datetime import datetime
 
@@ -56,6 +57,8 @@ ERROR_WRITE_FAILED = "WRITE_FAILED"
 ERROR_QUEUE_OVERLOADED = "QUEUE_OVERLOADED"
 ERROR_INVALID_FRAME = "INVALID_FRAME"
 ERROR_WRITER_ERROR = "WRITER_ERROR"
+# Not enough MemAvailable at series start for the pre-allocated buffer pool.
+ERROR_INSUFFICIENT_MEMORY = "INSUFFICIENT_MEMORY"
 
 # Sidecar fields owned by this module; callers cannot override them through
 # metadata. "time" is reserved so the legacy field name is never reused with a
@@ -125,6 +128,94 @@ def memory_snapshot():
 # the pool, bounds how many images are in flight.
 DEFAULT_POOL_BUFFERS = 4
 
+# Ready (allocated and page-faulted) buffers a BufferPool's background worker
+# keeps free. When the writer is behind, every recycled buffer is still in the
+# writer queue; these spare buffers let the callback still skip the ~46 ms
+# fresh allocation. Costs about target * 47 MiB per series at full resolution.
+# Disabled (0) by default. Live runs on 2026-10-05 lost frames while the
+# writer drained with every setting, including the committed code (no
+# pre-fill), so the pre-fill was not shown to cause them; see
+# FRAME-LOSS-REPORT.md. With 0 no worker thread is started.
+DEFAULT_POOL_TARGET = 0
+
+# Extra MemAvailable required at series start, on top of the pool target.
+POOL_MEMORY_HEADROOM_BYTES = 150 * 1024 * 1024
+
+# Pre-faulting writes a new buffer in chunks of this many bytes, so the
+# background worker never holds the GIL for a whole 47 MiB pass and the camera
+# thread can run between chunks.
+_PREFAULT_CHUNK_BYTES = 1 << 20
+try:
+    _PAGE_BYTES = int(os.sysconf("SC_PAGE_SIZE"))
+except (AttributeError, ValueError, OSError):
+    _PAGE_BYTES = 4096
+
+# How long an idle pool worker waits before re-checking that its pool still
+# exists (acquire() and close() wake it at once).
+_POOL_WORKER_IDLE_SECONDS = 1.0
+
+# While the camera callback is running (BufferPool.set_active), the fill worker
+# re-checks this often. Faulting in a buffer at the same time as the callback
+# converts a frame slows the callback from ~30 to ~45 ms on a Pi 4 (memory
+# bandwidth), so the worker only faults pages in the gaps between callbacks.
+_POOL_ACTIVE_POLL_SECONDS = 0.002
+
+
+def _allocate_ready(shape, dtype, wait=None):
+    """Allocate one zeroed array with every page already faulted in, or None.
+
+    Module-level so tests can patch it. ``np.zeros`` alone is not enough: a
+    large array gets lazily mapped zero pages, so the page faults would happen
+    later, in the camera callback. Writing one zero into every page faults
+    each page in here, in the background thread, and leaves the array all
+    zeros (about 47 ms for 47 MiB on a Pi 4, versus about 56 ms to write
+    every element).
+
+    ``wait`` (optional) is called before each 1 MiB chunk; it may block the
+    calling (worker) thread until the camera callback is idle, and returns
+    False to abandon the array (the pool was closed), in which case None is
+    returned.
+    """
+    array = np.zeros(shape, dtype=dtype)
+    flat = array.reshape(-1)
+    itemsize = max(1, array.itemsize)
+    per_page = max(1, _PAGE_BYTES // itemsize)
+    step = max(per_page, _PREFAULT_CHUNK_BYTES // itemsize)
+    for start in range(0, flat.size, step):
+        if wait is not None and not wait():
+            return None
+        flat[start:start + step:per_page] = 0
+    return array
+
+
+def _available_memory_bytes():
+    """System MemAvailable in bytes, or None. Module-level so tests can patch it."""
+    return memory_snapshot()["system_available_bytes"]
+
+
+def _pool_worker(pool_ref, stop, wake):
+    """Background fill loop for one BufferPool. Never raises.
+
+    Adds one ready buffer per iteration (``top_up()``) until the pool reaches
+    its target, then waits until an acquire wakes it. Exits when the pool is
+    closed or garbage collected: it holds only a weak reference, so a pool that
+    is dropped without ``close()`` does not keep its buffers alive.
+    """
+    try:
+        while not stop.is_set():
+            pool = pool_ref()
+            if pool is None:
+                return
+            # Cleared before the check, so an acquire that pops a buffer after
+            # this point always wakes the wait below.
+            wake.clear()
+            added = pool._top_up(pool._wait_until_idle)
+            del pool
+            if not added:
+                wake.wait(_POOL_WORKER_IDLE_SECONDS)
+    except Exception:
+        pass
+
 
 class BufferPool:
     """Thread-safe pool of full-size arrays, recycled between the callback and writer.
@@ -144,15 +235,38 @@ class BufferPool:
     ``release(array)`` makes the array writeable again and keeps it if fewer
     than ``max_free`` arrays of its kind are free; otherwise it is dropped and
     freed normally. Only release an array that nothing else will read or write.
+
+    Pre-allocation: the first ``acquire()`` records the pool's shape and dtype
+    and starts a daemon worker thread that keeps ``target`` ready (allocated,
+    zeroed and page-faulted) arrays of that kind free, one ``top_up()`` at a
+    time; every acquire wakes it to replace what was taken. So when the writer
+    falls behind and no recycled array has come back, the callback still finds
+    a ready one. The worker never holds the pool lock while allocating. If it
+    cannot keep up, acquire falls back to a fresh allocation exactly as
+    before. ``close()`` stops the worker; ``target=0`` disables it.
+
+    ``set_active(True/False)`` around each camera callback is optional: while
+    active, the worker pauses between 1 MiB chunks, so its page faults use the
+    gaps between callbacks instead of slowing the callback down.
     """
 
-    def __init__(self, zero=True, max_free=DEFAULT_POOL_BUFFERS):
+    def __init__(self, zero=True, max_free=DEFAULT_POOL_BUFFERS, target=DEFAULT_POOL_TARGET):
         self.zero = bool(zero)
         self.max_free = max(0, int(max_free))
+        self.target = max(0, int(target))
         self._lock = threading.Lock()  # leaf lock: never held while taking another
         self._free = {}
         self._reused = 0
         self._allocated = 0
+        self._prefilled = 0
+        # Shape and dtype the worker fills, learned from the first acquire.
+        self._fill_shape = None
+        self._fill_dtype = None
+        self._closed = False
+        self._active = False  # the camera callback is running (set_active)
+        self._stop = threading.Event()
+        self._wake = threading.Event()
+        self._worker = None
 
     @staticmethod
     def _key(shape, dtype):
@@ -161,12 +275,32 @@ class BufferPool:
     def acquire(self, shape, dtype):
         """Return an array of ``shape`` and ``dtype`` (zeroed if ``zero``). Never blocks."""
         key = self._key(shape, dtype)
+        start_worker = False
         with self._lock:
+            if self._fill_shape is None:
+                self._fill_shape, self._fill_dtype = key[0], np.dtype(dtype)
+            if self._worker is None and self.target > 0 and not self._closed:
+                self._worker = threading.Thread(
+                    target=_pool_worker,
+                    args=(weakref.ref(self), self._stop, self._wake),
+                    name="buffer-pool-fill",
+                    daemon=True,
+                )
+                start_worker = True
             free = self._free.get(key)
-            if free:
+            array = free.pop() if free else None
+            if array is not None:
                 self._reused += 1
-                return free.pop()
-            self._allocated += 1
+            else:
+                self._allocated += 1
+        if start_worker:
+            try:
+                self._worker.start()
+            except Exception:
+                pass  # no worker only means no pre-allocation; acquire still works
+        self._wake.set()  # ask the worker to replace what was taken; never blocks
+        if array is not None:
+            return array
         return np.zeros(shape, dtype=dtype) if self.zero else np.empty(shape, dtype=dtype)
 
     def release(self, array):
@@ -185,18 +319,87 @@ class BufferPool:
             if len(free) < self.max_free:
                 free.append(array)
 
+    def set_active(self, active):
+        """Mark the camera callback as running (True) or finished (False). Never blocks."""
+        with self._lock:
+            self._active = bool(active)
+
+    def _wait_until_idle(self):
+        """Worker only: wait while the callback is active. False once the pool is closed.
+
+        Does not wait while the pool has no free array of its kind: the next
+        callback would then have to allocate one itself, which costs more
+        than sharing memory bandwidth with the current callback.
+        """
+        while not self._stop.is_set():
+            with self._lock:
+                active = self._active
+                empty = not self._free.get(self._key(self._fill_shape, self._fill_dtype))
+            if not active or empty:
+                return True
+            self._stop.wait(_POOL_ACTIVE_POLL_SECONDS)
+        return False
+
+    def top_up(self):
+        """Add ONE ready array of the pool's kind if fewer than ``target`` are free.
+
+        Returns True if an array was added. Does nothing before the first
+        acquire (shape unknown) or after ``close()``. The allocation and page
+        faulting happen outside the lock, so acquire and release never wait for
+        it. A new array is all zeros, which also satisfies ``zero=True``.
+        """
+        return self._top_up(None)
+
+    def _top_up(self, wait):
+        """top_up(); the worker passes ``wait`` to pause while the callback runs."""
+        with self._lock:
+            if self._closed or self._fill_shape is None:
+                return False
+            shape, dtype = self._fill_shape, self._fill_dtype
+            key = self._key(shape, dtype)
+            if len(self._free.get(key, ())) >= self.target:
+                return False
+        array = _allocate_ready(shape, dtype, wait)
+        if array is None:
+            return False
+        with self._lock:
+            # Re-checked: the pool may have been closed, or refilled by
+            # release(), while the array was being faulted in.
+            free = self._free.setdefault(key, [])
+            if self._closed or len(free) >= self.target:
+                return False
+            free.append(array)
+            self._prefilled += 1
+        return True
+
+    def close(self):
+        """Stop the fill worker. Idempotent and never blocks; acquire/release still work."""
+        with self._lock:
+            self._closed = True
+        self._stop.set()
+        self._wake.set()
+
     def clear(self):
         """Drop every free array (frees the memory). Later acquires allocate."""
         with self._lock:
             self._free = {}
 
     def stats(self):
-        """Free arrays and how acquires were served, for status reporting."""
+        """Free arrays and how acquires were served, for status reporting.
+
+        ``allocated`` counts acquires that had to allocate (the slow fallback);
+        ``prefilled`` counts ready arrays added by the worker; ``filling`` is
+        whether the worker thread is running.
+        """
         with self._lock:
+            worker = self._worker
             return {
                 "free": sum(len(v) for v in self._free.values()),
                 "reused": self._reused,
                 "allocated": self._allocated,
+                "prefilled": self._prefilled,
+                "target": self.target,
+                "filling": bool(worker is not None and worker.is_alive() and not self._closed),
             }
 
 
@@ -507,9 +710,18 @@ class ContinuousSeries:
         # Recycled image buffers, so the camera callback rarely has to fault in a
         # fresh 47 MiB array. nframes == 1 uses mean buffers (fully overwritten,
         # never zeroed); nframes > 1 uses sum buffers, which the writer zeroes
-        # when it releases them. Emptied when the series finishes.
-        self._mean_pool = BufferPool(zero=False)
-        self._sum_pool = BufferPool(zero=True)
+        # when it releases them. Each pool keeps DEFAULT_POOL_TARGET ready
+        # buffers, refilled by a background thread once the first frame has set
+        # the shape, so the callback does not allocate even when the writer is
+        # behind. max_free is never below the target, so a recycled buffer is
+        # kept rather than dropped and then re-allocated by the worker. Closed
+        # and emptied when the series finishes.
+        max_free = max(DEFAULT_POOL_BUFFERS, DEFAULT_POOL_TARGET)
+        self._mean_pool = BufferPool(zero=False, max_free=max_free,
+                                     target=DEFAULT_POOL_TARGET)
+        self._sum_pool = BufferPool(zero=True, max_free=max_free,
+                                    target=DEFAULT_POOL_TARGET)
+        self._memory_checked = False
         self._accumulator = FrameGroupAccumulator(self.nframes, width=width,
                                                   mean_pool=self._mean_pool,
                                                   sum_pool=self._sum_pool)
@@ -574,6 +786,17 @@ class ContinuousSeries:
                 self._end_capture(STATE_FAILED, gate)
                 return False
 
+            if not self._memory_checked:
+                self._memory_checked = True
+                error = self._check_pool_memory(frame, next_index)
+                if error is not None:
+                    self._end_capture(STATE_FAILED, error)
+                    return False
+
+            # The fill workers pause while the frame is converted/added, so their
+            # page faults do not compete with it for memory bandwidth.
+            self._mean_pool.set_active(True)
+            self._sum_pool.set_active(True)
             try:
                 if timer is None:
                     group = self._accumulator.add_frame(frame, timestamp_us)
@@ -585,6 +808,9 @@ class ContinuousSeries:
                     self._make_error(ERROR_INVALID_FRAME, str(e), image_index=next_index),
                 )
                 return False
+            finally:
+                self._mean_pool.set_active(False)
+                self._sum_pool.set_active(False)
 
             if group is None:
                 return True
@@ -704,9 +930,46 @@ class ContinuousSeries:
             "pool_free_sums": sums["free"],
             "pool_reused_buffers": means["reused"] + sums["reused"],
             "pool_fresh_allocations": means["allocated"] + sums["allocated"],
+            # Pre-allocation: ready buffers each pool keeps, and whether a
+            # background fill thread is running for either pool.
+            "pool_target_means": means["target"],
+            "pool_target_sums": sums["target"],
+            "pool_filling": means["filling"] or sums["filling"],
         })
         snapshot.update(memory_snapshot())
         return snapshot
+
+    def _check_pool_memory(self, frame, image_index):
+        """Start-of-series check that the pre-allocated pool fits in memory.
+
+        Called with _capture_lock held, once, on the series' first frame (when
+        the frame shape becomes known), before any buffer is acquired. Returns
+        an error dict if MemAvailable is below the estimated pool cost
+        (``target * rows * width * 4`` bytes, plus headroom), else None. A
+        frame that cannot be measured is left to the accumulator to reject,
+        and an unreadable MemAvailable never fails the series. Never raises.
+        """
+        try:
+            if not isinstance(frame, np.ndarray) or frame.ndim != 2:
+                return None
+            rows = int(frame.shape[0])
+            width = min(int(frame.shape[1]), self._accumulator.width)
+            target = max(self._mean_pool.target, self._sum_pool.target)
+            required = target * rows * width * 4 + POOL_MEMORY_HEADROOM_BYTES
+            available = _available_memory_bytes()
+        except Exception:
+            return None
+        if available is None or available >= required:
+            return None
+        mib = 1024 * 1024
+        return self._make_error(
+            ERROR_INSUFFICIENT_MEMORY,
+            f"Not enough memory to start the series: MemAvailable is "
+            f"{available / mib:.0f} MiB, but {target} pre-allocated buffers of "
+            f"{rows}x{width} need about {required / mib:.0f} MiB including "
+            f"{POOL_MEMORY_HEADROOM_BYTES // mib} MiB headroom",
+            image_index=image_index,
+        )
 
     def _filename(self, image_index):
         """Output basename (no extension) for one image."""
@@ -858,6 +1121,9 @@ class ContinuousSeries:
     def _finalize(self):
         # The series is over: free the recycled buffers rather than keep up to
         # a few hundred MiB alive while the manager holds the finished series.
+        # Stop the fill workers first so they do not refill the cleared pools.
+        self._mean_pool.close()
+        self._sum_pool.close()
         self._mean_pool.clear()
         self._sum_pool.clear()
         with self._lock:

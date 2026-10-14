@@ -1679,7 +1679,7 @@ class Motor:
 if __name__ == "__main__":
     pass
     file = FileTransfer5()
-    file.set_barcode("SERIES50-T3")
+    file.set_barcode("E.COLI-2")
     motor = Motor(filename = file)
     #motor.collect_data_manual_fov(126, 15, [20, 40], "SM1", 1, transfer=False)
     #motor.collect_exposure_series_manual_fov(131, 13, 300, 40, "SM2", 1)
@@ -1689,14 +1689,14 @@ if __name__ == "__main__":
         z_pos=None,
         magnification=20,
         smear_id="SM1",
-        fov_number=1,
+        fov_number=2,
         nframes=1,
-        image_count=5,
+        image_count=30,
         exposure_time=None,
         queue_capacity=50,
         width=None,
-        series_count=10,
-        inter_series_pause_s=1.0,
+        series_count=1,
+        inter_series_pause_s=0.0,
     )
 
     # --- Exposure Time Pre-set Test ---
