@@ -77,6 +77,9 @@ class OutputZMQ(Output):
             self.z_height = z_height
 
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            # The save writes into this folder directly; create it up front so a
+            # missing folder cannot crash the frame callback later.
+            os.makedirs(folder_path, exist_ok=True)
             self.current_base_path = os.path.dirname(folder_path)
             self.current_tif_path = os.path.join(folder_path, f"{filename_base}.tif")
             self.current_json_path = os.path.join(folder_path, f"{filename_base}.json")
@@ -180,9 +183,16 @@ class OutputZMQ(Output):
                 self.accN += 1
             else:
                 with fd.stage(timer, fd.STAGE_LEGACY_SAVE):
-                    self.save_accumulated()
-                self.accN = None
-                self.accT = None
+                    try:
+                        self.save_accumulated()
+                    except Exception:
+                        # A failed save must not kill the frame callback or leave
+                        # the accumulator stuck: report it and release capture.
+                        print(f"Legacy accumulate save failed:\n{traceback.format_exc()}")
+                    finally:
+                        self.accN = None
+                        self.accT = None
+                        self.save_in_progress = False
                 # self.current_tif_path = None # clear filename after saving
                 # self.current_json_path = None
                 return True
@@ -705,6 +715,15 @@ def camera_zmq(verbose = True):
                     socket.send_string(json.dumps({"unrecognized": msg["command"]}))
             except KeyError:
                 socket.send_string(json.dumps({"key error in": msg}))
+            except Exception:
+                # A handler failure must not kill the server loop (the process
+                # would stay alive but stop replying). Always reply exactly once
+                # so the client REQ socket stays in sync.
+                print(f"Command handling error:\n{traceback.format_exc()}")
+                try:
+                    socket.send_string(json.dumps({"error": "unhandled server error"}))
+                except zmq.error.ZMQError:
+                    pass
 
         time.sleep(0.1)
     stop = time.time()

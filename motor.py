@@ -85,6 +85,14 @@ class Motor:
         self.filename = filename
         self.zstack_folder_path = None
 
+        # Z-stack capture variants: list of (nframes, filename_suffix) pairs
+        # applied at every imaged z-step. Default preserves legacy behavior
+        # (one unsuffixed 100-frame image per z-step).
+        self.capture_frame_variants = [(100, "")]
+
+        # Whether per-image JSON sidecars are folded into the z-stack JSON.
+        self.populate_zstack_json = True
+
         # Accepting logger function
         self.logger = logger
 
@@ -371,16 +379,65 @@ class Motor:
             self.logger(f"{pos} is not a valid input. Can't move carousel")
 
     def capture_image(self, z):
-        image_filename, file_path = self.filename.data_filename_generator(self.focus_view, self.obj, self.current_x, self.current_y, z)
-        self.logger(f"Taking image! Filename: {image_filename}, File Path: {file_path}")
-        self.imager.take_rpi_image(100, image_filename, file_path, z_height=z, magnification=self.obj)
-        time.sleep(15)
+        base_filename, file_path = self.filename.data_filename_generator(self.focus_view, self.obj, self.current_x, self.current_y, z)
+        self.logger(f"Taking image! Filename: {base_filename}, File Path: {file_path}")
 
-        # sending image to Web UI
-        image_tif_path = os.path.join(file_path, f"{image_filename}.tif")
-        self.imager.update_latest_image_to_jpg(image_tif_path)
+        primary_tif_path = None
+        for nframes, suffix in self.capture_frame_variants:
+            image_filename = f"{base_filename}{suffix}"
+            self.logger(f"Capturing {nframes}-frame image: {image_filename}")
+            tif_path = self._capture_image_variant(
+                nframes, image_filename, file_path, z, wait_for_output=bool(suffix)
+            )
+            if nframes == 100:
+                primary_tif_path = tif_path
 
-        return image_filename, file_path
+        # sending image to Web UI (the 100-frame image when captured)
+        if primary_tif_path is None:
+            primary_tif_path = tif_path
+        self.imager.update_latest_image_to_jpg(primary_tif_path)
+
+        return base_filename, file_path
+
+    def _capture_image_variant(self, nframes, image_filename, file_path, z, wait_for_output):
+        """Send one accumulate request and wait for its output files.
+
+        Unsuffixed captures keep the legacy fixed wait. Suffixed (dual-frame)
+        captures poll for the TIFF and JSON sidecar instead, because the camera
+        service drops commands while a previous accumulate is still running.
+        """
+        tif_path = os.path.join(file_path, f"{image_filename}.tif")
+        json_path = os.path.join(file_path, f"{image_filename}.json")
+        previous_stamps = {
+            path: os.stat(path).st_mtime_ns if os.path.exists(path) else None
+            for path in (tif_path, json_path)
+        }
+
+        self.imager.take_rpi_image(nframes, image_filename, file_path, z_height=z, magnification=self.obj)
+
+        if not wait_for_output:
+            time.sleep(15)
+            return tif_path
+
+        deadline = time.monotonic() + 60
+        while True:
+            self.check_stop()
+            current_stamps = {
+                path: os.stat(path).st_mtime_ns if os.path.exists(path) else None
+                for path in (tif_path, json_path)
+            }
+            if all(
+                current_stamps[path] is not None
+                and current_stamps[path] != previous_stamps[path]
+                for path in (tif_path, json_path)
+            ):
+                break
+            if time.monotonic() >= deadline:
+                raise TimeoutError(
+                    f"Timed out waiting for camera output for {image_filename}"
+                )
+            time.sleep(0.1)
+        return tif_path
 
     def focus_scan(self, start, end, step, take_image=False):
         self.home_axis("Z")
@@ -661,8 +718,9 @@ class Motor:
             self.logger("No additional scanning required — max focus score is centered.")
 
         # Populate zstack JSON with surviving image JSONs (post-cleanup), sorted by z
-        self.logger(f"Populating zstack JSON from folder {os.path.basename(self.zstack_folder_path)}...")
-        populate_zstack_json_from_folder(self.zstack_folder_path)
+        if self.populate_zstack_json:
+            self.logger(f"Populating zstack JSON from folder {os.path.basename(self.zstack_folder_path)}...")
+            populate_zstack_json_from_folder(self.zstack_folder_path)
 
     def first_scan_for_focus_preset(self, smear_list):
         self.home_axis("X, Y")
@@ -943,6 +1001,23 @@ class Motor:
             self.filename.copy_correction_folders_to_slide_case()
             mark_slide_done(self.filename.barcode, self.filename.date)
         self.stop_imaging()
+
+    def collect_data_manual_fov_dual_frame(self, x_pos, y_pos, objectives, smear_id, fov_target, transfer=False):
+        """Image a single FOV like collect_data_manual_fov, capturing frame pairs.
+
+        Every imaged z-step produces a ``_1frame`` and a ``_100frames`` TIFF+JSON
+        pair (the 1-frame image is captured first). Image cleanup still removes
+        out-of-range pairs from the z-stack folder, but the per-image JSON
+        sidecars are not folded into the z-stack JSON: it keeps its metadata-only
+        contents and the sidecars stay next to their TIFFs.
+        """
+        self.capture_frame_variants = [(1, "_1frame"), (100, "_100frames")]
+        self.populate_zstack_json = False
+        try:
+            self.collect_data_manual_fov(x_pos, y_pos, objectives, smear_id, fov_target, transfer)
+        finally:
+            self.capture_frame_variants = [(100, "")]
+            self.populate_zstack_json = True
 
     def collect_exposure_series_manual_fov(
         self, x_pos, y_pos, z_pos, magnification, smear_id, fov_number
@@ -1616,8 +1691,9 @@ class Motor:
         self.filename.image_cleanup(self.focus_view, self.obj, z_focus_10x, self.current_x, self.current_y, 1, 1)
 
         # Populate zstack JSON with surviving image JSONs (post-cleanup), sorted by z
-        self.logger(f"Populating zstack JSON from folder {os.path.basename(self.zstack_folder_path)}...")
-        populate_zstack_json_from_folder(self.zstack_folder_path)
+        if self.populate_zstack_json:
+            self.logger(f"Populating zstack JSON from folder {os.path.basename(self.zstack_folder_path)}...")
+            populate_zstack_json_from_folder(self.zstack_folder_path)
 
         self.check_stop()
 
@@ -1679,25 +1755,26 @@ class Motor:
 if __name__ == "__main__":
     pass
     file = FileTransfer5()
-    file.set_barcode("E.COLI-2")
+    file.set_barcode("IDWEUM-70000et")
     motor = Motor(filename = file)
     #motor.collect_data_manual_fov(126, 15, [20, 40], "SM1", 1, transfer=False)
+    motor.collect_data_manual_fov_dual_frame(131, 14, [20], "SM2", 1, transfer=False)
     #motor.collect_exposure_series_manual_fov(131, 13, 300, 40, "SM2", 1)
-    motor.collect_motion_blur_data(
-        x_pos=None,
-        y_pos=None,
-        z_pos=None,
-        magnification=20,
-        smear_id="SM1",
-        fov_number=2,
-        nframes=1,
-        image_count=30,
-        exposure_time=None,
-        queue_capacity=50,
-        width=None,
-        series_count=1,
-        inter_series_pause_s=0.0,
-    )
+    #motor.collect_motion_blur_data(
+    #    x_pos=None,
+    #    y_pos=None,
+    #    z_pos=None,
+    #    magnification=20,
+    #    smear_id="SM1",
+    #    fov_number=2,
+    #    nframes=1,
+    #    image_count=30,
+    #    exposure_time=None,
+    #    queue_capacity=50,
+    #    width=None,
+    #    series_count=1,
+    #    inter_series_pause_s=0.0,
+    #)
 
     # --- Exposure Time Pre-set Test ---
     #motor.home_carousel()
@@ -1734,3 +1811,4 @@ if __name__ == "__main__":
     #motor.move_y_axis(13.5)
     #motor.move_z_axis(200)
     #motor.move_carousel("3")
+

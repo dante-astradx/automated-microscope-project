@@ -104,10 +104,13 @@ class Camera:
 
     def take_rpi_image(self, nframes: int, filename: str, file_path: str = f"{c.PI_IMAGE_DIR}", z_height=None, magnification=None):
         print(f"\nCommanding camera server to accumulate {nframes} images...", flush=True)
-        self.send_command(
+        response = self.send_command(
             {"command": "accumulate", "nframes": nframes, "filename": filename, "file_path": file_path, "z_height": z_height, "magnification": magnification}
         )
-        #time.sleep(1)
+        # Surface rejections/timeouts: if this is not a "started" reply, no
+        # image will be captured.
+        print(f"Camera server reply: {response}", flush=True)
+        return response
 
     # --- Continuous series capture ---------------------------------------------
     # Start-and-poll protocol: start_series() returns once the camera service has
@@ -275,11 +278,11 @@ class Camera:
 
 if __name__ == "__main__":
    imager = Camera()
-   #imager.set_exposure_time(c.EXPOSURE_TIME_20X)
-   #time.sleep(1)
+   imager.set_exposure_time(30000)
+   time.sleep(1)
 
-   filename = "WET-MOUNT_TEST1_M1"
-   #file_path = os.path.join(c.PI_IMAGE_DIR, "no-light_20250919_M1", "no-light_20250919_M1_10x")
-   imager.take_rpi_image(1, filename)
+   filename = "no-slide_20261016_M1_30000et"
+   folder_name = "no-slide_20261016_M1_1frame"
+   file_path = os.path.join(c.PI_IMAGE_DIR, f"{folder_name}")
+   imager.take_rpi_image(1, filename, file_path, None, 20)
    time.sleep(15)
-

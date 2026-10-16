@@ -323,9 +323,14 @@ class FileTransfer5:
             print("Error: no files found to delete")
 
         for filename in matching_files:
-            parts = filename.rsplit("_", maxsplit=3)
+            name = os.path.splitext(filename)[0]  # removes '.tif' or '.json'
+            # Dual-frame captures append a frame-count suffix after the z value
+            for frame_suffix in ("_1frame", "_100frames"):
+                if name.endswith(frame_suffix):
+                    name = name[: -len(frame_suffix)]
+                    break
             try:
-                z_part = os.path.splitext(parts[-1])[0]  # removes '.tif' or '.json'
+                z_part = name.rsplit("_", maxsplit=1)[-1]
                 z = int(z_part.rstrip("z"))  # strip trailing 'z'
             except (ValueError, IndexError):
                 continue  # skip malformed filenames
@@ -352,4 +357,4 @@ if __name__ == "__main__":
     #file.upload_to_network("M5RCT6", rsync_remote, True)
 
     path = f"{c.REMOTE_RSYNC_PATH}"
-    file.upload_to_network(f"{c.PI_IMAGE_DIR}/E.COLI-1_20261006_M1", path, True, False)
+    file.upload_to_network(f"{c.PI_IMAGE_DIR}/IDWEUM-30000et_20261015_M1", path, True, False)
