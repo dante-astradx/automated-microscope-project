@@ -278,11 +278,20 @@ class Camera:
 
 if __name__ == "__main__":
    imager = Camera()
-   imager.set_exposure_time(30000)
-   time.sleep(1)
+   #imager.set_exposure_time(30000)
+   #time.sleep(1)
 
-   filename = "no-slide_20261016_M1_30000et"
-   folder_name = "no-slide_20261016_M1_1frame"
+   apt = 2.5
+   correction = "light"
+
+   filename = f"no-{correction}_20261023_M1_{apt}APTR"
+   folder_name = f"no-{correction}_20261023_M1_1frame"
    file_path = os.path.join(c.PI_IMAGE_DIR, f"{folder_name}")
    imager.take_rpi_image(1, filename, file_path, None, 20)
+   time.sleep(5)
+
+   filename = f"no-{correction}_20261023_M1_{apt}APTR"
+   folder_name = f"no-{correction}_20261023_M1_100frame"
+   file_path = os.path.join(c.PI_IMAGE_DIR, f"{folder_name}")
+   imager.take_rpi_image(100, filename, file_path, None, 20)
    time.sleep(15)

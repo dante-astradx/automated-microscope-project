@@ -1755,10 +1755,10 @@ class Motor:
 if __name__ == "__main__":
     pass
     file = FileTransfer5()
-    file.set_barcode("IDWEUM-70000et")
+    file.set_barcode("RA7DUS")
     motor = Motor(filename = file)
-    #motor.collect_data_manual_fov(126, 15, [20, 40], "SM1", 1, transfer=False)
-    motor.collect_data_manual_fov_dual_frame(131, 14, [20], "SM2", 1, transfer=False)
+    motor.collect_data_manual_fov(126, 15, [20, 40], "SM1", 1, transfer=False)
+    #motor.collect_data_manual_fov_dual_frame(127, 6, [20], "SM2", 1, transfer=False)
     #motor.collect_exposure_series_manual_fov(131, 13, 300, 40, "SM2", 1)
     #motor.collect_motion_blur_data(
     #    x_pos=None,
