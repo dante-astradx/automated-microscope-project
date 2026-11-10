@@ -8,7 +8,7 @@ from json_handler import create_correction_json
 
 microscope_id = c.MICROSCOPE_ID
 
-def generate_barcode_folders(barcode: str, smear_list, fovs, run_date=None):
+def generate_barcode_folders(barcode: str, smear_list, fovs, objective_list, run_date=None):
 
     # Create folder structure for given barcode.
     # Returns path to the microscope-level directory.
@@ -23,9 +23,7 @@ def generate_barcode_folders(barcode: str, smear_list, fovs, run_date=None):
 
     # Step 4: Subfolders for SM1–SM3 and objectives 10,20,40 and fovs (1, 2, 3, ect...)
     smear_ids = smear_list
-    #objectives = [10, 20, 40]
-    objectives = [20, 40]
-    #objectives = [40]
+    objectives = objective_list
 
     for smear_id, fov_count in zip(smear_ids, fovs):
         for obj in objectives:

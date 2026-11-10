@@ -347,12 +347,12 @@ class Motor:
             self.disable_carousel()
         elif pos == "2":
             self.logger("Moving carousel to the 20x objective")
-            self.move_command("carousel", 35)
+            self.move_command("carousel", c.POSITION_20X)
             self.set_objective(pos)
             self.disable_carousel()
         elif pos == "3":
             self.logger("Moving carousel to the 40x objective")
-            self.move_command("carousel", 70)
+            self.move_command("carousel", c.POSITION_40X)
             self.set_objective(pos)
             self.disable_carousel()
         else:
@@ -721,35 +721,45 @@ class Motor:
 
                 # code logic for implementation with the focus check QC
                 #stages = [(self.collect_data_with_10x, "10x", None), (self.collect_data_with_20x_40x, "20x", 2), (self.collect_data_with_20x_40x, "40x", 3)]
-                stages = [(self.collect_data_with_20x_40x, "20x", 2), (self.collect_data_with_20x_40x, "40x", 3)]
-                #stages = [(self.collect_data_with_20x_40x, "40x", 3)]
+                #stages = [(self.collect_data_with_20x_40x, "20x", 2), (self.collect_data_with_20x_40x, "40x", 3)]
+                stages = [(self.collect_data_with_20x_40x, "20x", 2)]
                 for collect_func, name, arg in stages:
-                    passed_qc = False
 
+                    # --- Temporary focus QC by-pass for testing purposes
+                    self.logger(f"Running {name} collection. Focus QC innactive")
+                    if arg is not None:
+                        collect_func(arg)
+                    else:
+                        collect_func()
+
+                    self.initiate_transfer_queue(self.focus_view, self.obj)
+
+                    #passed_qc = False
+                    
                     # Try up to 2 times
-                    for attempt in range(1, 3):
-                        self.logger(f"Running {name} collection (Attempt {attempt}/2)")
+                    #for attempt in range(1, 3):
+                        #self.logger(f"Running {name} collection (Attempt {attempt}/2)")
 
                         # Run the collection (with or without argument)
-                        if arg is not None:
-                            collect_func(arg)
-                        else:
-                            collect_func()
+                        #if arg is not None:
+                        #    collect_func(arg)
+                        #else:
+                        #    collect_func()
 
-                        self.logger("Running QC check on zstack")
-                        if self.qc_check_focus():
-                            self.logger(f"{name} QC Passed.")
-                            self.initiate_transfer_queue(self.focus_view, self.obj)
-                            passed_qc = True
-                            break # Success! Exit the retry loop and go to next stage
-                        else:
-                            self.logger(f"{name} QC Failed on attempt {attempt}.")
-                            self.handle_failed_qc()
-                            if attempt == 1:
-                                self.logger(f"Retrying {name} collection...")
-                            else:
-                                self.logger(f"{name} failed twice. Moving to next objective/step.")
-                                self.initiate_transfer_queue(self.focus_view, self.obj)
+                        #self.logger("Running QC check on zstack")
+                        #if self.qc_check_focus():
+                        #    self.logger(f"{name} QC Passed.")
+                        #    self.initiate_transfer_queue(self.focus_view, self.obj)
+                        #    passed_qc = True
+                        #    break # Success! Exit the retry loop and go to next stage
+                        #else:
+                        #    self.logger(f"{name} QC Failed on attempt {attempt}.")
+                        #    self.handle_failed_qc()
+                        #    if attempt == 1:
+                        #        self.logger(f"Retrying {name} collection...")
+                        #    else:
+                        #        self.logger(f"{name} failed twice. Moving to next objective/step.")
+                        #        self.initiate_transfer_queue(self.focus_view, self.obj)
 
         self.logger("Data collection finished. All images have been taken and saved to Images folder")
         self.filename.copy_correction_folders_to_slide_case()
@@ -888,6 +898,7 @@ class Motor:
             self.filename.barcode,
             [smear_id],
             [self.focus_view],
+            [20, 40],
             run_date=self.filename.date,
         )
 
@@ -958,6 +969,7 @@ class Motor:
             self.filename.barcode,
             [smear_id],
             [fov_number],
+            [20],
             run_date=self.filename.date,
         )
         create_manifest_json(self.filename)
@@ -1071,6 +1083,7 @@ class Motor:
             self.filename.barcode,
             [smear_id],
             [fov_number],
+            [20],
             run_date=self.filename.date,
         )
         create_manifest_json(self.filename)
@@ -1349,7 +1362,7 @@ if __name__ == "__main__":
     file.set_barcode("IDWEUM")
     motor = Motor(filename = file)
     #motor.collect_data_manual_fov(126, 15, [20, 40], "SM1", 1, transfer=False)
-    motor.collect_exposure_series_manual_fov(131, 13, 300, 40, "SM2", 1)
+    #motor.collect_exposure_series_manual_fov(131, 13, 300, 40, "SM2", 1)
 
     # --- Exposure Time Pre-set Test ---
     #motor.home_carousel()
@@ -1379,10 +1392,10 @@ if __name__ == "__main__":
     #motor.move_carousel("2")
 
     # --- Basic Motor Control Test ---
-    #motor.home_axis("X, Y")
+    motor.home_axis("X, Y")
     #motor.move_x_axis(c.SLIDE_1_SM3_CENTER_X)
     #motor.move_y_axis(c.SLIDE_1_CENTER_Y)
-    #motor.move_x_axis(137)
-    #motor.move_y_axis(13.5)
+    motor.move_x_axis(136)
+    motor.move_y_axis(12.5)
     #motor.move_z_axis(200)
     #motor.move_carousel("3")

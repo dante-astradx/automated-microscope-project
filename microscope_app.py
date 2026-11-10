@@ -157,7 +157,7 @@ def start():
                     smear_ids, coords = csv_lookup(slide["barcode"], slide["smears"])
 
                     fovs = [len(c) for c in coords]
-                    generate_barcode_folders(slide["barcode"], slide["smears"], fovs, run_date=run_start_date)
+                    generate_barcode_folders(slide["barcode"], slide["smears"], fovs, [20], run_date=run_start_date)
 
                     # Create the manifest json for this barcode run
                     create_manifest_json(file)
@@ -169,7 +169,7 @@ def start():
                     desired_fov = 2
                     fovs = [desired_fov for _ in slide["smears"]]
 
-                    generate_barcode_folders(slide["barcode"], slide["smears"], fovs, run_date=run_start_date)
+                    generate_barcode_folders(slide["barcode"], slide["smears"], fovs, [20], run_date=run_start_date)
 
                     # Create the manifest json for this barcode run
                     create_manifest_json(file)
